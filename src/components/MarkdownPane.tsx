@@ -12,9 +12,6 @@ export const MarkdownPane = memo(function MarkdownPane({ markdown, onChange }: M
 
   return (
     <div className="pane">
-      <div className="pane__header">
-        <h2>Markdown</h2>
-      </div>
       <CodeMirror
         aria-label="Markdown editor"
         className="pane__editor pane__editor--markdown"

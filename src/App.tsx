@@ -1,36 +1,25 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { MarkdownPane } from './components/MarkdownPane'
 import { WysiwygPane } from './components/WysiwygPane'
 import type { SyncState, UpdateSource } from './types/editor'
 
 const INITIAL_MARKDOWN = `# ProseMirror Split Editor
 
-このデモは **Markdown** と **WYSIWYG** を同時に編集できます。
+This demo lets you edit **Markdown** and **WYSIWYG** side by side.
 
 ## Features
 
-- 双方向リアルタイム同期
-- ProseMirror + Unified ベースのリッチテキスト編集
-- Markdown 側は CodeMirror で編集
+- Real-time bidirectional sync
+- Rich-text editing powered by ProseMirror + Unified
+- CodeMirror-based Markdown editing
 
-- [ ] タスク1
-- [x] タスク2
+- [ ] Task 1
+- [x] Task 2
 
 | Column A | Column B |
 | --- | --- |
 | Cell A1 | Cell B1 |
 `
-
-function toSourceLabel(source: UpdateSource): string {
-  switch (source) {
-    case 'markdown':
-      return 'Markdown Pane'
-    case 'wysiwyg':
-      return 'WYSIWYG Pane'
-    default:
-      return 'Initial'
-  }
-}
 
 function App() {
   const [syncState, setSyncState] = useState<SyncState>({
@@ -67,22 +56,8 @@ function App() {
     [updateMarkdown],
   )
 
-  const statusText = useMemo(() => {
-    return `Rev ${syncState.revision} - Last update: ${toSourceLabel(syncState.source)}`
-  }, [syncState.revision, syncState.source])
-
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <div>
-          <h1>Split Markdown / WYSIWYG Editor</h1>
-          <p>ProseMirror + Unified + CodeMirror</p>
-        </div>
-        <span className="status-pill" aria-live="polite">
-          {statusText}
-        </span>
-      </header>
-
       <main className="editor-grid">
         <MarkdownPane markdown={syncState.markdown} onChange={handleMarkdownChange} />
         <WysiwygPane
