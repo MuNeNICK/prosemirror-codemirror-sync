@@ -22,6 +22,7 @@ const taskItemNodeSpec: NodeSpec = {
   parseDOM: [
     {
       tag: 'li[data-type="task-item"]',
+      contentElement: '.task-item__content',
       getAttrs(dom) {
         const checked = (dom as HTMLElement).getAttribute('data-checked') === 'true'
         return { checked }
@@ -38,7 +39,18 @@ const taskItemNodeSpec: NodeSpec = {
         'data-checked': checked ? 'true' : 'false',
         class: checked ? 'task-item is-checked' : 'task-item',
       },
-      0,
+      [
+        'input',
+        {
+          class: 'task-item__checkbox',
+          'data-task-checkbox': 'true',
+          type: 'checkbox',
+          checked: checked ? 'checked' : null,
+          contenteditable: 'false',
+          'aria-hidden': 'true',
+        },
+      ],
+      ['div', { class: 'task-item__content' }, 0],
     ]
   },
 }

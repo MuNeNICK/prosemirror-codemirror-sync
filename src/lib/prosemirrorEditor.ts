@@ -375,6 +375,71 @@ function createKeymapPlugin() {
   return keymap(bindings)
 }
 
+function toggleTaskItemCheckedAtPos(view: EditorView, pos: number): boolean {
+  const taskItemType = prosemirrorSchema.nodes.task_item
+  if (!taskItemType) {
+    return false
+  }
+
+  const docSize = view.state.doc.content.size
+  const resolvedPosition = view.state.doc.resolve(Math.min(Math.max(pos, 0), docSize))
+
+  for (let depth = resolvedPosition.depth; depth > 0; depth -= 1) {
+    const node = resolvedPosition.node(depth)
+    if (node.type !== taskItemType) {
+      continue
+    }
+
+    const before = resolvedPosition.before(depth)
+    const transaction = view.state.tr.setNodeMarkup(before, taskItemType, {
+      ...node.attrs,
+      checked: node.attrs.checked !== true,
+    })
+    view.dispatch(transaction.scrollIntoView())
+    return true
+  }
+
+  return false
+}
+
+function createTaskCheckboxPlugin(): Plugin {
+  return new Plugin({
+    props: {
+      handleDOMEvents: {
+        mousedown(view, event) {
+          if (!(event instanceof MouseEvent)) {
+            return false
+          }
+
+          const target = event.target
+          if (!(target instanceof Element)) {
+            return false
+          }
+
+          const taskItemElement = target.closest<HTMLElement>('li[data-type="task-item"]')
+          if (!taskItemElement || !view.dom.contains(taskItemElement)) {
+            return false
+          }
+
+          const checkboxElement = target.closest<HTMLElement>('[data-task-checkbox]')
+          if (!checkboxElement) {
+            return false
+          }
+
+          const position = view.posAtDOM(taskItemElement, 0)
+          const toggled = toggleTaskItemCheckedAtPos(view, position)
+          if (!toggled) {
+            return false
+          }
+
+          event.preventDefault()
+          return true
+        },
+      },
+    },
+  })
+}
+
 function createBlockHandlePlugin(): Plugin {
   let draggingFromBefore: number | null = null
 
@@ -730,6 +795,7 @@ function createBlockHandlePlugin(): Plugin {
 function createPlugins() {
   return [
     createInputRulesPlugin(),
+    createTaskCheckboxPlugin(),
     createBlockHandlePlugin(),
     columnResizing({
       handleWidth: 5,
