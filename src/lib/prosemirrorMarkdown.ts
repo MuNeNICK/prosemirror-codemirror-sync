@@ -19,17 +19,19 @@ import type {
 } from 'mdast'
 import type { Mark, Node as ProseMirrorNode, Schema } from 'prosemirror-model'
 import { unified } from 'unified'
+import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
 
-const markdownParser = unified().use(remarkParse).use(remarkGfm)
+const markdownParser = unified().use(remarkParse).use(remarkGfm).use(remarkBreaks)
 const markdownStringifier = unified()
   .use(remarkGfm)
   .use(remarkStringify, {
     bullet: '-',
     fences: true,
     listItemIndent: 'one',
+    join: [() => 0],
   })
 
 export function normalizeMarkdown(value: string): string {
@@ -161,12 +163,6 @@ function inlineChildrenToProseMirror(
               title: image.title ?? null,
             }),
           )
-        }
-        break
-      }
-      case 'break': {
-        if (schema.nodes.hard_break) {
-          inlineNodes.push(schema.nodes.hard_break.create())
         }
         break
       }
@@ -346,10 +342,6 @@ function inlineFromProseMirror(node: ProseMirrorNode): PhrasingContent[] {
         if (childNode.text) {
           inlineChildren.push(...textWithMarksToMdast(childNode.text, childNode.marks))
         }
-        break
-      }
-      case 'hard_break': {
-        inlineChildren.push({ type: 'break' })
         break
       }
       case 'image': {
@@ -562,9 +554,80 @@ function blockFromProseMirror(node: ProseMirrorNode): BlockContent | null {
   }
 }
 
+function insertEmptyParagraphsForGaps(children: Content[]): Content[] {
+  const result: Content[] = []
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]
+
+    if (child.type === 'blockquote') {
+      child.children = insertEmptyParagraphsForGaps(child.children) as BlockContent[]
+    } else if (child.type === 'list') {
+      for (const item of child.children) {
+        item.children = insertEmptyParagraphsForGaps(item.children) as BlockContent[]
+      }
+    }
+
+    if (i > 0) {
+      const prev = children[i - 1]
+      if (prev.position && child.position) {
+        const gap = child.position.start.line - prev.position.end.line - 1
+        for (let j = 0; j < gap; j++) {
+          result.push({ type: 'paragraph', children: [] })
+        }
+      }
+    }
+
+    result.push(child)
+  }
+
+  return result
+}
+
+function splitBreakParagraphs(children: Content[]): Content[] {
+  const result: Content[] = []
+
+  for (const child of children) {
+    if (child.type === 'blockquote') {
+      child.children = splitBreakParagraphs(child.children) as BlockContent[]
+    } else if (child.type === 'list') {
+      for (const item of child.children) {
+        item.children = splitBreakParagraphs(item.children) as BlockContent[]
+      }
+    }
+
+    if (child.type !== 'paragraph') {
+      result.push(child)
+      continue
+    }
+
+    if (!child.children.some((c) => c.type === 'break')) {
+      result.push(child)
+      continue
+    }
+
+    let current: PhrasingContent[] = []
+    for (const inline of child.children) {
+      if (inline.type === 'break') {
+        result.push({ type: 'paragraph', children: current })
+        current = []
+      } else {
+        current.push(inline)
+      }
+    }
+    result.push({ type: 'paragraph', children: current })
+  }
+
+  return result
+}
+
 export function markdownToProseMirrorDoc(markdown: string, schema: Schema): ProseMirrorNode {
   try {
-    const parsedTree = markdownParser.parse(normalizeMarkdown(markdown)) as Root
+    const parsedTree = markdownParser.runSync(
+      markdownParser.parse(normalizeMarkdown(markdown)),
+    ) as Root
+    parsedTree.children = insertEmptyParagraphsForGaps(parsedTree.children) as Root['children']
+    parsedTree.children = splitBreakParagraphs(parsedTree.children) as Root['children']
     const blockNodes = blockChildrenToProseMirror(parsedTree.children, schema)
 
     if (blockNodes.length === 0) {
@@ -575,6 +638,75 @@ export function markdownToProseMirrorDoc(markdown: string, schema: Schema): Pros
   } catch {
     return schema.node('doc', null, [schema.nodes.paragraph.create(null, schema.text(markdown))])
   }
+}
+
+export type BlockPositionEntry = {
+  pmStart: number
+  pmEnd: number
+  mdStart: number
+  mdEnd: number
+}
+
+export type BlockPositionMap = BlockPositionEntry[]
+
+function singleBlockToMarkdown(node: ProseMirrorNode): string {
+  const mapped = blockFromProseMirror(node)
+  if (!mapped) return ''
+  const root: Root = { type: 'root', children: [mapped] }
+  const md = markdownStringifier.stringify(root)
+  return typeof md === 'string' ? md.replace(/\n$/, '') : ''
+}
+
+export function buildBlockPositionMap(doc: ProseMirrorNode): BlockPositionMap {
+  const fullMd = proseMirrorDocToMarkdown(doc)
+  const map: BlockPositionMap = []
+  let searchFrom = 0
+
+  doc.forEach((child, offset) => {
+    const pmStart = offset + 1 // +1 for doc open tag
+    const pmEnd = pmStart + child.nodeSize
+    const blockMd = singleBlockToMarkdown(child)
+
+    if (blockMd.length === 0) {
+      map.push({ pmStart, pmEnd, mdStart: searchFrom, mdEnd: searchFrom })
+      return
+    }
+
+    const idx = fullMd.indexOf(blockMd, searchFrom)
+    if (idx >= 0) {
+      map.push({ pmStart, pmEnd, mdStart: idx, mdEnd: idx + blockMd.length })
+      searchFrom = idx + blockMd.length
+    } else {
+      map.push({ pmStart, pmEnd, mdStart: searchFrom, mdEnd: searchFrom })
+    }
+  })
+
+  return map
+}
+
+export function prosemirrorPosToMarkdownOffset(
+  map: BlockPositionMap,
+  pmPos: number,
+): number | null {
+  for (const entry of map) {
+    if (pmPos >= entry.pmStart && pmPos <= entry.pmEnd) {
+      const blockPmSize = entry.pmEnd - entry.pmStart
+      if (blockPmSize === 0) return entry.mdStart
+
+      const ratio = (pmPos - entry.pmStart) / blockPmSize
+      const mdBlockLength = entry.mdEnd - entry.mdStart
+      return entry.mdStart + Math.round(ratio * mdBlockLength)
+    }
+  }
+
+  // If position is before first block or after last, clamp
+  if (map.length > 0) {
+    if (pmPos < map[0].pmStart) return map[0].mdStart
+    const last = map[map.length - 1]
+    if (pmPos > last.pmEnd) return last.mdEnd
+  }
+
+  return null
 }
 
 export function proseMirrorDocToMarkdown(doc: ProseMirrorNode): string {

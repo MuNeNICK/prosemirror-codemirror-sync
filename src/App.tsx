@@ -3,7 +3,7 @@ import type { Awareness } from 'y-protocols/awareness'
 import { prosemirrorToYXmlFragment, yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror'
 import { IndexeddbPersistence } from 'y-indexeddb'
 import { WebsocketProvider } from 'y-websocket'
-import { Doc } from 'yjs'
+import { createRelativePositionFromTypeIndex, Doc } from 'yjs'
 import type { Text as YText, XmlFragment as YXmlFragment } from 'yjs'
 import { MarkdownPane } from './components/MarkdownPane'
 import { WysiwygPane } from './components/WysiwygPane'
@@ -121,6 +121,20 @@ function replaceSharedProsemirror(
 function App() {
   const sharedMarkdownRef = useRef<YText | null>(null)
   const [bindings, setBindings] = useState<CollabBindings | null>(null)
+  const [cursorOffset, setCursorOffset] = useState<number | undefined>(undefined)
+
+  const awarenessRef = useRef<Awareness | null>(null)
+
+  const handleCursorPositionChange = useCallback((mdOffset: number) => {
+    setCursorOffset(mdOffset)
+
+    const sharedMarkdown = sharedMarkdownRef.current
+    const awareness = awarenessRef.current
+    if (!sharedMarkdown || !awareness) return
+
+    const anchor = createRelativePositionFromTypeIndex(sharedMarkdown, mdOffset)
+    awareness.setLocalStateField('cursor', { anchor, head: anchor })
+  }, [])
 
   const handleWysiwygMarkdownChange = useCallback((nextMarkdown: string) => {
     const sharedMarkdown = sharedMarkdownRef.current
@@ -140,6 +154,7 @@ function App() {
     let lastBridgedMarkdown: string | null = null
 
     sharedMarkdownRef.current = sharedMarkdown
+    awarenessRef.current = ws.awareness
     ws.awareness.setLocalStateField('user', createLocalUser())
 
     const syncMarkdownToProsemirror = (origin: string) => {
@@ -235,6 +250,7 @@ function App() {
       persistence.destroy()
       doc.destroy()
       sharedMarkdownRef.current = null
+      awarenessRef.current = null
       setBindings(null)
     }
   }, [])
@@ -246,12 +262,13 @@ function App() {
   return (
     <div className="app-shell">
       <main className="editor-grid">
-        <MarkdownPane sharedMarkdown={bindings.sharedMarkdown} awareness={bindings.awareness} />
+        <MarkdownPane sharedMarkdown={bindings.sharedMarkdown} awareness={bindings.awareness} scrollToOffset={cursorOffset} />
         <WysiwygPane
           sharedProsemirror={bindings.sharedProsemirror}
           awareness={bindings.awareness}
           initialMarkdown={INITIAL_MARKDOWN}
           onLocalMarkdownChange={handleWysiwygMarkdownChange}
+          onCursorPositionChange={handleCursorPositionChange}
         />
       </main>
     </div>

@@ -114,7 +114,7 @@ describe('getSlashCommands', () => {
 
 describe('moveTopLevelBlock', () => {
   it('moves a block after another block', () => {
-    const { view, getState } = createMutableView('A\n\nB\n\nC')
+    const { view, getState } = createMutableView('A\nB\nC')
     const sourceBefore = beforePositionOfIndex(getState(), 0)
     const targetBefore = beforePositionOfIndex(getState(), 1)
 
@@ -127,7 +127,7 @@ describe('moveTopLevelBlock', () => {
   })
 
   it('returns false when moving block to the same position', () => {
-    const { view, getState } = createMutableView('A\n\nB')
+    const { view, getState } = createMutableView('A\nB')
     const sourceBefore = beforePositionOfIndex(getState(), 1)
 
     const moved = moveTopLevelBlock(view, sourceBefore, sourceBefore, 'before')

@@ -9,8 +9,8 @@ describe('prosemirror markdown conversion', () => {
     const doc = markdownToProseMirrorDoc(markdown, prosemirrorSchema)
 
     expect(doc.child(0).type.name).toBe('heading')
-    expect(doc.child(1).type.name).toBe('task_list')
-    expect(doc.child(2).type.name).toBe('table')
+    expect(doc.child(2).type.name).toBe('task_list')
+    expect(doc.child(4).type.name).toBe('table')
   })
 
   it('serializes ProseMirror document to markdown with key constructs', () => {

@@ -62,7 +62,7 @@ const strikeMarkSpec: MarkSpec = {
   },
 }
 
-let nodes = addListNodes(basicSchema.spec.nodes, 'paragraph block*', 'block')
+let nodes = addListNodes(basicSchema.spec.nodes.remove('hard_break'), 'paragraph block*', 'block')
 nodes = nodes.append(
   tableNodes({
     tableGroup: 'block',

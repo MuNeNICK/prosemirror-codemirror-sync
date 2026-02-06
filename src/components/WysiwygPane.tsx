@@ -26,6 +26,11 @@ import {
   type SlashCommandId,
   type SlashCommandSpec,
 } from '../lib/prosemirrorEditor'
+import {
+  buildBlockPositionMap,
+  prosemirrorPosToMarkdownOffset,
+  type BlockPositionMap,
+} from '../lib/prosemirrorMarkdown'
 import { EditorView as ProseMirrorEditorView } from 'prosemirror-view'
 import type { Awareness } from 'y-protocols/awareness'
 import { ySyncPluginKey } from 'y-prosemirror'
@@ -36,6 +41,7 @@ type WysiwygPaneProps = {
   awareness: Awareness
   initialMarkdown: string
   onLocalMarkdownChange: (markdown: string) => void
+  onCursorPositionChange?: (mdOffset: number) => void
 }
 
 type SlashMenuState = {
@@ -225,6 +231,7 @@ export const WysiwygPane = memo(function WysiwygPane({
   awareness,
   initialMarkdown,
   onLocalMarkdownChange,
+  onCursorPositionChange,
 }: WysiwygPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const slashMenuElementRef = useRef<HTMLDivElement | null>(null)
@@ -238,6 +245,8 @@ export const WysiwygPane = memo(function WysiwygPane({
   const manualSlashModeRef = useRef(false)
   const markdownSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingMarkdownViewRef = useRef<EditorView | null>(null)
+  const blockPositionMapRef = useRef<BlockPositionMap | null>(null)
+  const onCursorPositionChangeRef = useRef(onCursorPositionChange)
 
   const clearPendingMarkdownSync = useCallback(() => {
     if (markdownSyncTimerRef.current !== null) {
@@ -280,6 +289,10 @@ export const WysiwygPane = memo(function WysiwygPane({
   useEffect(() => {
     onLocalMarkdownChangeRef.current = onLocalMarkdownChange
   }, [onLocalMarkdownChange])
+
+  useEffect(() => {
+    onCursorPositionChangeRef.current = onCursorPositionChange
+  }, [onCursorPositionChange])
 
   useEffect(() => {
     slashMenuRef.current = slashMenu
@@ -375,11 +388,28 @@ export const WysiwygPane = memo(function WysiwygPane({
           setSlashMenu(null)
         }
 
+        // Cursor → CodeMirror position sync
+        const ySyncMeta = transaction.getMeta(ySyncPluginKey) as { isChangeOrigin?: boolean } | undefined
+        if (!ySyncMeta?.isChangeOrigin && editorView.hasFocus()) {
+          if (transaction.docChanged) {
+            blockPositionMapRef.current = buildBlockPositionMap(nextState.doc)
+          }
+          if (!blockPositionMapRef.current) {
+            blockPositionMapRef.current = buildBlockPositionMap(nextState.doc)
+          }
+          const mdOffset = prosemirrorPosToMarkdownOffset(
+            blockPositionMapRef.current,
+            nextState.selection.from,
+          )
+          if (mdOffset !== null) {
+            onCursorPositionChangeRef.current?.(mdOffset)
+          }
+        }
+
         if (!transaction.docChanged) {
           return
         }
 
-        const ySyncMeta = transaction.getMeta(ySyncPluginKey) as { isChangeOrigin?: boolean } | undefined
         if (ySyncMeta?.isChangeOrigin) {
           return
         }

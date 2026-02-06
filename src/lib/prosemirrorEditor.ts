@@ -830,7 +830,7 @@ function createPlugins(collab?: ProseMirrorCollabRuntime) {
   if (collab) {
     return [
       ySyncPlugin(collab.xmlFragment, { mapping: collab.mapping }),
-      yCursorPlugin(collab.awareness),
+      yCursorPlugin(collab.awareness, {}, 'pmCursor'),
       yUndoPlugin(),
       ...plugins,
     ]
