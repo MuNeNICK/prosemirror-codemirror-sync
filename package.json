@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node server.cjs & vite",
+    "dev:ws": "node server.cjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -34,8 +35,11 @@
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
     "unified": "^11.0.5",
+    "y-codemirror.next": "^0.3.5",
     "y-indexeddb": "^9.0.12",
-    "y-webrtc": "^10.3.0",
+    "y-prosemirror": "^1.3.7",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^3.0.0",
     "yjs": "^13.6.29"
   },
   "devDependencies": {
@@ -57,6 +61,7 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
     "vite": "^7.2.4",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "ws": "^8.19.0"
   }
 }

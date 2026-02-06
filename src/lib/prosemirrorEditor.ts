@@ -11,7 +11,7 @@ import {
 } from 'prosemirror-commands'
 import { dropCursor } from 'prosemirror-dropcursor'
 import { gapCursor } from 'prosemirror-gapcursor'
-import { history, redo, undo } from 'prosemirror-history'
+import { history, redo as historyRedo, undo as historyUndo } from 'prosemirror-history'
 import { inputRules, textblockTypeInputRule, wrappingInputRule } from 'prosemirror-inputrules'
 import { keymap } from 'prosemirror-keymap'
 import type { Node as ProseMirrorNode } from 'prosemirror-model'
@@ -26,6 +26,16 @@ import {
 import { liftListItem, sinkListItem, splitListItem, wrapInList } from 'prosemirror-schema-list'
 import { columnResizing, tableEditing } from 'prosemirror-tables'
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
+import type { Awareness } from 'y-protocols/awareness'
+import {
+  initProseMirrorDoc,
+  redo as yRedo,
+  undo as yUndo,
+  yCursorPlugin,
+  ySyncPlugin,
+  yUndoPlugin,
+} from 'y-prosemirror'
+import type { XmlFragment as YXmlFragment } from 'yjs'
 import { markdownToProseMirrorDoc, normalizeMarkdown, proseMirrorDocToMarkdown } from './prosemirrorMarkdown'
 import { prosemirrorSchema } from './prosemirrorSchema'
 
@@ -34,6 +44,15 @@ export const OPEN_SLASH_MENU_META = 'open-slash-menu'
 
 const BLOCK_HANDLE_DRAG_TYPE = 'application/x-prosemirror-block-handle'
 const blockHandlePluginKey = new PluginKey('block-handle-plugin')
+
+type ProseMirrorCollabOptions = {
+  xmlFragment: YXmlFragment
+  awareness: Awareness
+}
+
+type ProseMirrorCollabRuntime = ProseMirrorCollabOptions & {
+  mapping: ReturnType<typeof initProseMirrorDoc>['mapping']
+}
 
 type IconDefinition = {
   viewBox: string
@@ -334,11 +353,11 @@ function createInputRulesPlugin() {
   return inputRules({ rules })
 }
 
-function createKeymapPlugin() {
+function createKeymapPlugin(collabEnabled: boolean) {
   const bindings: Record<string, Command> = {
-    'Mod-z': undo,
-    'Shift-Mod-z': redo,
-    'Mod-y': redo,
+    'Mod-z': collabEnabled ? yUndo : historyUndo,
+    'Shift-Mod-z': collabEnabled ? yRedo : historyRedo,
+    'Mod-y': collabEnabled ? yRedo : historyRedo,
   }
 
   if (prosemirrorSchema.marks.strong) {
@@ -792,8 +811,8 @@ function createBlockHandlePlugin(): Plugin {
   })
 }
 
-function createPlugins() {
-  return [
+function createPlugins(collab?: ProseMirrorCollabRuntime) {
+  const plugins: Plugin[] = [
     createInputRulesPlugin(),
     createTaskCheckboxPlugin(),
     createBlockHandlePlugin(),
@@ -802,15 +821,40 @@ function createPlugins() {
       lastColumnResizable: true,
     }),
     tableEditing(),
-    history(),
     dropCursor(),
     gapCursor(),
-    createKeymapPlugin(),
+    createKeymapPlugin(Boolean(collab)),
     keymap(baseKeymap),
   ]
+
+  if (collab) {
+    return [
+      ySyncPlugin(collab.xmlFragment, { mapping: collab.mapping }),
+      yCursorPlugin(collab.awareness),
+      yUndoPlugin(),
+      ...plugins,
+    ]
+  }
+
+  return [history(), ...plugins]
 }
 
-export function createProseMirrorState(markdown: string): EditorState {
+export function createProseMirrorState(
+  markdown: string,
+  collab?: ProseMirrorCollabOptions,
+): EditorState {
+  if (collab) {
+    const { doc, mapping } = initProseMirrorDoc(collab.xmlFragment, prosemirrorSchema)
+    return ProseMirrorEditorState.create({
+      schema: prosemirrorSchema,
+      doc,
+      plugins: createPlugins({
+        ...collab,
+        mapping,
+      }),
+    })
+  }
+
   return ProseMirrorEditorState.create({
     schema: prosemirrorSchema,
     doc: markdownToProseMirrorDoc(markdown, prosemirrorSchema),

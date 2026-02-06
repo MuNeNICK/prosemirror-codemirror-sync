@@ -15,11 +15,9 @@ import type { EditorState as ProseMirrorState } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
 import type { ReactNode } from 'react'
 import {
-  applyMarkdownToProseMirror,
   createProseMirrorState,
   deleteTextRange,
   executeSlashCommand,
-  EXTERNAL_SYNC_META,
   extractMarkdownFromProseMirror,
   getSlashCommandMatch,
   getSlashCommands,
@@ -28,14 +26,16 @@ import {
   type SlashCommandId,
   type SlashCommandSpec,
 } from '../lib/prosemirrorEditor'
-import { shouldSkipSync } from '../lib/sync'
-import type { UpdateSource } from '../types/editor'
 import { EditorView as ProseMirrorEditorView } from 'prosemirror-view'
+import type { Awareness } from 'y-protocols/awareness'
+import { ySyncPluginKey } from 'y-prosemirror'
+import type { XmlFragment as YXmlFragment } from 'yjs'
 
 type WysiwygPaneProps = {
-  markdown: string
-  onChange: (markdown: string) => void
-  source: UpdateSource
+  sharedProsemirror: YXmlFragment
+  awareness: Awareness
+  initialMarkdown: string
+  onLocalMarkdownChange: (markdown: string) => void
 }
 
 type SlashMenuState = {
@@ -93,6 +93,7 @@ const slashCommandGroups: SlashCommandGroup[] = [
     ids: ['code_block', 'divider', 'table'],
   },
 ]
+const MARKDOWN_BRIDGE_DEBOUNCE_MS = 80
 
 function nextMenuIndex(current: number, total: number): number {
   if (total <= 0) {
@@ -219,11 +220,15 @@ function findGroupByIndex(
   return found ?? null
 }
 
-export const WysiwygPane = memo(function WysiwygPane({ markdown, onChange, source }: WysiwygPaneProps) {
+export const WysiwygPane = memo(function WysiwygPane({
+  sharedProsemirror,
+  awareness,
+  initialMarkdown,
+  onLocalMarkdownChange,
+}: WysiwygPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const slashMenuElementRef = useRef<HTMLDivElement | null>(null)
-  const onChangeRef = useRef(onChange)
-  const initialMarkdownRef = useRef(markdown)
+  const onLocalMarkdownChangeRef = useRef(onLocalMarkdownChange)
   const [view, setView] = useState<EditorView | null>(null)
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
@@ -231,10 +236,50 @@ export const WysiwygPane = memo(function WysiwygPane({ markdown, onChange, sourc
   const slashMenuRef = useRef<SlashMenuState | null>(null)
   const slashIndexRef = useRef(0)
   const manualSlashModeRef = useRef(false)
+  const markdownSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingMarkdownViewRef = useRef<EditorView | null>(null)
+
+  const clearPendingMarkdownSync = useCallback(() => {
+    if (markdownSyncTimerRef.current !== null) {
+      clearTimeout(markdownSyncTimerRef.current)
+      markdownSyncTimerRef.current = null
+    }
+  }, [])
+
+  const flushPendingMarkdownSync = useCallback(() => {
+    clearPendingMarkdownSync()
+
+    if (pendingMarkdownViewRef.current === null) {
+      return
+    }
+
+    onLocalMarkdownChangeRef.current(extractMarkdownFromProseMirror(pendingMarkdownViewRef.current))
+    pendingMarkdownViewRef.current = null
+  }, [clearPendingMarkdownSync])
+
+  const scheduleLocalMarkdownSync = useCallback(
+    (editorView: EditorView) => {
+      pendingMarkdownViewRef.current = editorView
+
+      clearPendingMarkdownSync()
+
+      markdownSyncTimerRef.current = setTimeout(() => {
+        markdownSyncTimerRef.current = null
+
+        if (pendingMarkdownViewRef.current === null) {
+          return
+        }
+
+        onLocalMarkdownChangeRef.current(extractMarkdownFromProseMirror(pendingMarkdownViewRef.current))
+        pendingMarkdownViewRef.current = null
+      }, MARKDOWN_BRIDGE_DEBOUNCE_MS)
+    },
+    [clearPendingMarkdownSync],
+  )
 
   useEffect(() => {
-    onChangeRef.current = onChange
-  }, [onChange])
+    onLocalMarkdownChangeRef.current = onLocalMarkdownChange
+  }, [onLocalMarkdownChange])
 
   useEffect(() => {
     slashMenuRef.current = slashMenu
@@ -281,7 +326,10 @@ export const WysiwygPane = memo(function WysiwygPane({ markdown, onChange, sourc
     }
 
     const editorView = new ProseMirrorEditorView(hostElement, {
-      state: createProseMirrorState(initialMarkdownRef.current),
+      state: createProseMirrorState(initialMarkdown, {
+        xmlFragment: sharedProsemirror,
+        awareness,
+      }),
       dispatchTransaction(transaction) {
         const nextState = editorView.state.apply(transaction)
         editorView.updateState(nextState)
@@ -327,11 +375,16 @@ export const WysiwygPane = memo(function WysiwygPane({ markdown, onChange, sourc
           setSlashMenu(null)
         }
 
-        if (!transaction.docChanged || transaction.getMeta(EXTERNAL_SYNC_META) === true) {
+        if (!transaction.docChanged) {
           return
         }
 
-        onChangeRef.current(extractMarkdownFromProseMirror(editorView))
+        const ySyncMeta = transaction.getMeta(ySyncPluginKey) as { isChangeOrigin?: boolean } | undefined
+        if (ySyncMeta?.isChangeOrigin) {
+          return
+        }
+
+        scheduleLocalMarkdownSync(editorView)
       },
       handleKeyDown(view, event) {
         const currentSlashMenu = slashMenuRef.current
@@ -420,12 +473,13 @@ export const WysiwygPane = memo(function WysiwygPane({ markdown, onChange, sourc
     setView(editorView)
 
     return () => {
+      flushPendingMarkdownSync()
       editorView.destroy()
       setView(null)
       manualSlashModeRef.current = false
       setSlashMenu(null)
     }
-  }, [])
+  }, [awareness, flushPendingMarkdownSync, initialMarkdown, scheduleLocalMarkdownSync, sharedProsemirror])
 
   useEffect(() => {
     if (!slashMenu) {
@@ -460,18 +514,6 @@ export const WysiwygPane = memo(function WysiwygPane({ markdown, onChange, sourc
       documentRef.removeEventListener('pointerdown', onPointerDownOutside, true)
     }
   }, [slashMenu])
-
-  useEffect(() => {
-    if (!view) {
-      return
-    }
-
-    if (shouldSkipSync(source, 'wysiwyg')) {
-      return
-    }
-
-    applyMarkdownToProseMirror(view, markdown)
-  }, [view, markdown, source])
 
   return (
     <div className="pane">

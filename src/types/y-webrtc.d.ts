@@ -1,18 +1,20 @@
-declare module 'y-webrtc' {
+declare module 'y-websocket' {
+  import type { Awareness } from 'y-protocols/awareness'
   import type { Doc } from 'yjs'
 
-  export type WebrtcProviderOptions = {
-    signaling?: string[]
-    password?: string
-    awareness?: unknown
-    maxConns?: number
-    filterBcConns?: boolean
-    peerOpts?: Record<string, unknown>
-  }
-
-  export class WebrtcProvider {
-    constructor(roomName: string, doc: Doc, options?: WebrtcProviderOptions)
+  export class WebsocketProvider {
+    awareness: Awareness
+    wsconnected: boolean
+    constructor(serverUrl: string, roomName: string, doc: Doc, options?: {
+      connect?: boolean
+      awareness?: Awareness
+      params?: Record<string, string>
+      resyncInterval?: number
+      maxBackoffTime?: number
+      disableBc?: boolean
+    })
+    connect(): void
+    disconnect(): void
     destroy(): void
   }
 }
-
