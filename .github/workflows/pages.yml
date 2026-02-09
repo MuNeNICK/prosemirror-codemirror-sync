@@ -24,6 +24,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run build -w @pm-cm/core
+      - run: npm run build -w @pm-cm/yjs
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
