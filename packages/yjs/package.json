@@ -34,7 +34,7 @@
   "author": "munenick",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/munenick/prosemirror-codemirror-sync.git",
+    "url": "git+https://github.com/MuNeNICK/prosemirror-codemirror-sync.git",
     "directory": "packages/yjs"
   },
   "keywords": ["prosemirror", "codemirror", "yjs", "sync", "bridge"],
