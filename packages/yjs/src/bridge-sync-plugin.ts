@@ -14,6 +14,7 @@ export type BridgeSyncPluginOptions = {
   onWarning?: (message: string) => void
 }
 
+/** ProseMirror plugin key for {@link createBridgeSyncPlugin}. Use to read the plugin state. */
 export const bridgeSyncPluginKey = new PluginKey<BridgeSyncState>('pm-cm-bridge-sync')
 
 const wiredBridges = new WeakSet<YjsBridgeHandle>()
@@ -55,9 +56,11 @@ export function createBridgeSyncPlugin(
           const state = bridgeSyncPluginKey.getState(view.state)
           if (state?.needsSync) {
             const result = bridge.syncToSharedText(view.state.doc)
-            if (!result.ok && result.reason !== 'unchanged') {
-              options.onSyncFailure?.(result, view)
-              warn(`[pm-cm] bridge sync failed: ${result.reason}`)
+            if (!result.ok) {
+              if (result.reason === 'detached') {
+                options.onSyncFailure?.(result, view)
+                warn(`[pm-cm] bridge sync failed: ${result.reason}`)
+              }
             }
           }
         },

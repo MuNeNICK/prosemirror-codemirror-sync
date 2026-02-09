@@ -16,15 +16,21 @@ export type CursorSyncState = {
   mappedTextOffset: number | null
 }
 
+/** ProseMirror plugin key for {@link createCursorSyncPlugin}. Use to read the plugin state. */
 export const cursorSyncPluginKey = new PluginKey<CursorSyncState>('pm-cm-cursor-sync')
+
+/**
+ * Internal shape of `ySyncPluginKey` state from y-prosemirror.
+ * Not exported by upstream — kept here for explicit tracking.
+ * Tested against y-prosemirror ^1.x.
+ */
+type YSyncPluginState = { type: YXmlFragment; binding: { mapping: Map<any, any> } }
 
 function toRelativePosition(
   view: EditorView,
   pmPos: number,
 ): unknown | null {
-  const ySyncState = ySyncPluginKey.getState(view.state) as
-    | { type: YXmlFragment; binding: { mapping: Map<any, any> } }
-    | undefined
+  const ySyncState = ySyncPluginKey.getState(view.state) as YSyncPluginState | undefined
   if (!ySyncState?.type || !ySyncState?.binding) return null
 
   return absolutePositionToRelativePosition(

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Node, Schema } from 'prosemirror-model'
 import { Doc, Text as YText, XmlFragment as YXmlFragment } from 'yjs'
+import { prosemirrorToYXmlFragment } from 'y-prosemirror'
 import { replaceSharedText, replaceSharedProseMirror, createYjsBridge } from '../bridge.js'
 import type { YjsBridgeConfig } from '../types.js'
 
@@ -79,6 +80,22 @@ describe('replaceSharedProseMirror', () => {
     expect(result).toEqual({ ok: false, reason: 'parse-error' })
     expect(onError).toHaveBeenCalledOnce()
   })
+
+  it('returns detached when fragment has no doc', () => {
+    const ydoc = new Doc()
+    const fragment = new YXmlFragment()
+    const result = replaceSharedProseMirror(ydoc, fragment, 'hello', 'test', { schema, parse })
+    expect(result).toEqual({ ok: false, reason: 'detached' })
+  })
+
+  it('throws when fragment belongs to a different doc', () => {
+    const ydoc1 = new Doc()
+    const ydoc2 = new Doc()
+    const fragment = ydoc2.getXmlFragment('pm')
+    expect(() =>
+      replaceSharedProseMirror(ydoc1, fragment, 'hello', 'test', { schema, parse }),
+    ).toThrow('different Y.Doc')
+  })
 })
 
 describe('createYjsBridge', () => {
@@ -96,6 +113,32 @@ describe('createYjsBridge', () => {
     const config = makeConfig(ydoc)
     const bridge = createYjsBridge(config)
     expect(bridge.bootstrapResult.source).toBe('empty')
+    bridge.dispose()
+  })
+
+  it('bootstraps from prosemirror with parseError when serialize fails', () => {
+    const ydoc = new Doc()
+    // Directly populate XmlFragment without touching Y.Text
+    const fragment = ydoc.getXmlFragment('prosemirror')
+    const pmDoc = parse('hello')
+    ydoc.transact(() => {
+      prosemirrorToYXmlFragment(pmDoc, fragment)
+    })
+    expect(fragment.length).toBeGreaterThan(0)
+    expect(ydoc.getText('text').toString()).toBe('')
+
+    // Use a serialize that throws to simulate failure
+    const badSerialize = () => { throw new Error('serialize failed') }
+    const onError = vi.fn()
+    const config: YjsBridgeConfig = {
+      ...makeConfig(ydoc),
+      serialize: badSerialize,
+      onError,
+    }
+    const bridge = createYjsBridge(config)
+    expect(bridge.bootstrapResult.source).toBe('prosemirror')
+    expect(bridge.bootstrapResult.parseError).toBe(true)
+    expect(onError).toHaveBeenCalled()
     bridge.dispose()
   })
 

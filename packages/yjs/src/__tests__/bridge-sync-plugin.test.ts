@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { Schema } from 'prosemirror-model'
-import { EditorState } from 'prosemirror-state'
+import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { createBridgeSyncPlugin, bridgeSyncPluginKey } from '../bridge-sync-plugin.js'
 import type { YjsBridgeHandle } from '../types.js'
@@ -127,7 +127,7 @@ describe('createBridgeSyncPlugin', () => {
 
     // Selection-only change
     const tr = view.state.tr.setSelection(
-      view.state.selection.constructor.near(view.state.doc.resolve(1)),
+      TextSelection.near(view.state.doc.resolve(1)),
     )
     view.dispatch(tr)
 

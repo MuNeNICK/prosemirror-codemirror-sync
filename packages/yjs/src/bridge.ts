@@ -12,12 +12,14 @@ const defaultOnError: OnError = (context, error) => console.error(`[bridge] ${co
 /** Result of {@link replaceSharedText}. */
 export type ReplaceTextResult =
   | { ok: true }
-  | { ok: false; reason: 'unchanged' | 'detached' }
+  | { ok: false; reason: 'unchanged' }
+  | { ok: false; reason: 'detached' }
 
 /** Result of {@link replaceSharedProseMirror}. */
 export type ReplaceProseMirrorResult =
   | { ok: true }
   | { ok: false; reason: 'parse-error' }
+  | { ok: false; reason: 'detached' }
 
 /**
  * Union of all replace-result types. Kept for backward compatibility.
@@ -84,6 +86,13 @@ export function replaceSharedProseMirror(
   origin: unknown,
   config: Pick<YjsBridgeConfig, 'schema' | 'parse' | 'normalize' | 'onError'>,
 ): ReplaceProseMirrorResult {
+  if (!fragment.doc) {
+    return { ok: false, reason: 'detached' }
+  }
+  if (fragment.doc !== doc) {
+    throw new Error('fragment belongs to a different Y.Doc than the provided doc')
+  }
+
   const normalize = config.normalize ?? defaultNormalize
   const onError = config.onError ?? defaultOnError
   let nextDoc: Node
@@ -213,8 +222,9 @@ export function createYjsBridge(
       if (textFromProsemirror !== null) {
         replaceSharedText(sharedText, textFromProsemirror, ORIGIN_INIT, normalize)
         lastBridgedText = normalize(textFromProsemirror)
+        return { source: 'prosemirror' }
       }
-      return { source: 'prosemirror' }
+      return { source: 'prosemirror', parseError: true }
     }
 
     const prosemirrorText = sharedProseMirrorToText(sharedProseMirror)
@@ -261,10 +271,11 @@ export function createYjsBridge(
     syncTextToProsemirror(ORIGIN_TEXT_TO_PM)
   }
 
-  sharedText.observe(textObserver)
-
-  // Run bootstrap synchronously
+  // Run bootstrap synchronously before installing the observer so that
+  // an exception during bootstrap cannot leave a dangling observer.
   const bootstrapResult = bootstrap()
+
+  sharedText.observe(textObserver)
 
   return {
     bootstrapResult,
@@ -280,6 +291,7 @@ export function createYjsBridge(
       return result
     },
     isYjsSyncChange(tr: Transaction): boolean {
+      // Internal meta shape from y-prosemirror's ySyncPlugin (tested against ^1.x).
       const meta = tr.getMeta(ySyncPluginKey) as { isChangeOrigin?: boolean } | undefined
       return meta?.isChangeOrigin === true
     },

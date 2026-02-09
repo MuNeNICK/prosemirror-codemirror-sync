@@ -32,7 +32,7 @@ export type YjsBridgeConfig = {
  */
 export type BootstrapResult = {
   source: 'text' | 'prosemirror' | 'both-match' | 'empty' | 'initial'
-  /** `true` when `parse()` failed during bootstrap. The bridge is still usable but Y.XmlFragment may be stale. */
+  /** `true` when format conversion (parse or serialize) failed during bootstrap. The bridge is still usable but the affected shared type may be stale. */
   parseError?: boolean
 }
 
