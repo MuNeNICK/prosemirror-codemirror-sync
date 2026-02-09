@@ -53,7 +53,7 @@ function toRelativePosition(
   return absolutePositionToRelativePosition(
     pmPos,
     ySyncState.type,
-    ySyncState.binding.mapping,
+    ySyncState.binding.mapping as any, // eslint-disable-line @typescript-eslint/no-explicit-any -- y-prosemirror internal mapping type
   )
 }
 

@@ -6,6 +6,7 @@ import { Doc, Text as YText, XmlFragment as YXmlFragment, createRelativePosition
 import { Awareness } from 'y-protocols/awareness'
 
 import { createCursorSyncPlugin, cursorSyncPluginKey, syncCmCursor } from '../cursor-sync-plugin.js'
+import type { OnWarning } from '../types.js'
 
 const schema = new Schema({
   nodes: {
@@ -87,7 +88,7 @@ describe('negative offset clamping', () => {
 describe('createCursorSyncPlugin (integration)', () => {
   function createViewWithCursorSync(options?: {
     sharedText?: YText
-    onWarning?: typeof vi.fn extends (...args: infer _A) => infer _R ? ReturnType<typeof vi.fn> : never
+    onWarning?: OnWarning
   }) {
     const ydoc = new Doc()
     const awareness = new Awareness(ydoc)

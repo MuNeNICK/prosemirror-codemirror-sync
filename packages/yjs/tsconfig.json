@@ -11,7 +11,8 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "verbatimModuleSyntax": true,
-    "erasableSyntaxOnly": true
+    "erasableSyntaxOnly": true,
+    "composite": true
   },
   "include": ["src"],
   "references": [

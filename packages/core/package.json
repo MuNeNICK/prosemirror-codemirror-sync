@@ -23,6 +23,18 @@
     "prosemirror-state": "^1.4.0",
     "prosemirror-view": "^1.20.0"
   },
+  "description": "Cursor mapping between ProseMirror and text editors",
+  "license": "MIT",
+  "author": "munenick",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/munenick/prosemirror-codemirror-sync.git",
+    "directory": "packages/core"
+  },
+  "keywords": ["prosemirror", "codemirror", "sync", "bridge", "cursor"],
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "prosemirror-model": "^1.25.4",
     "prosemirror-state": "^1.4.4",
