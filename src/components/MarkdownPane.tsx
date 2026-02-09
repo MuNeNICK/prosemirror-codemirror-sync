@@ -10,18 +10,35 @@ type MarkdownPaneProps = {
   sharedMarkdown: YText
   awareness: Awareness
   scrollToOffset?: number
+  onCursorPositionChange?: (mdOffset: number) => void
 }
 
 export const MarkdownPane = memo(function MarkdownPane({
   sharedMarkdown,
   awareness,
   scrollToOffset,
+  onCursorPositionChange,
 }: MarkdownPaneProps) {
   const cmRef = useRef<ReactCodeMirrorRef>(null)
+  const onCursorPositionChangeRef = useRef(onCursorPositionChange)
+
+  useEffect(() => {
+    onCursorPositionChangeRef.current = onCursorPositionChange
+  }, [onCursorPositionChange])
+
+  const cursorListener = useMemo(
+    () =>
+      EditorView.updateListener.of((update) => {
+        if (!update.view.hasFocus) return
+        if (!update.selectionSet && !update.docChanged) return
+        onCursorPositionChangeRef.current?.(update.state.selection.main.head)
+      }),
+    [],
+  )
 
   const extensions = useMemo(
-    () => [markdownLanguage(), yCollab(sharedMarkdown, awareness)],
-    [sharedMarkdown, awareness],
+    () => [markdownLanguage(), yCollab(sharedMarkdown, awareness), cursorListener],
+    [sharedMarkdown, awareness, cursorListener],
   )
 
   useEffect(() => {

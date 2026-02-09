@@ -122,11 +122,18 @@ function App() {
   const sharedMarkdownRef = useRef<YText | null>(null)
   const [bindings, setBindings] = useState<CollabBindings | null>(null)
   const [cursorOffset, setCursorOffset] = useState<number | undefined>(undefined)
-
+  const [cmCursorOffset, setCmCursorOffset] = useState<number | undefined>(undefined)
+  const [activePane, setActivePane] = useState<'cm' | 'pm'>('cm')
   const awarenessRef = useRef<Awareness | null>(null)
+
+  const handleCmCursorPositionChange = useCallback((mdOffset: number) => {
+    setCmCursorOffset(mdOffset)
+    setActivePane('cm')
+  }, [])
 
   const handleCursorPositionChange = useCallback((mdOffset: number) => {
     setCursorOffset(mdOffset)
+    setActivePane('pm')
 
     const sharedMarkdown = sharedMarkdownRef.current
     const awareness = awarenessRef.current
@@ -261,14 +268,15 @@ function App() {
 
   return (
     <div className="app-shell">
-      <main className="editor-grid">
-        <MarkdownPane sharedMarkdown={bindings.sharedMarkdown} awareness={bindings.awareness} scrollToOffset={cursorOffset} />
+      <main className={`editor-grid editor-grid--${activePane}-active`}>
+        <MarkdownPane sharedMarkdown={bindings.sharedMarkdown} awareness={bindings.awareness} scrollToOffset={cursorOffset} onCursorPositionChange={handleCmCursorPositionChange} />
         <WysiwygPane
           sharedProsemirror={bindings.sharedProsemirror}
           awareness={bindings.awareness}
           initialMarkdown={INITIAL_MARKDOWN}
           onLocalMarkdownChange={handleWysiwygMarkdownChange}
           onCursorPositionChange={handleCursorPositionChange}
+          cmCursorOffset={cmCursorOffset}
         />
       </main>
     </div>

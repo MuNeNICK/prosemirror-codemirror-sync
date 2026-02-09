@@ -29,11 +29,12 @@ import {
 import {
   buildCursorMap,
   cursorMapLookup,
+  reverseCursorMapLookup,
   type CursorMap,
 } from '../lib/prosemirrorMarkdown'
 import { EditorView as ProseMirrorEditorView } from 'prosemirror-view'
 import type { Awareness } from 'y-protocols/awareness'
-import { ySyncPluginKey } from 'y-prosemirror'
+import { absolutePositionToRelativePosition, ySyncPluginKey } from 'y-prosemirror'
 import type { XmlFragment as YXmlFragment } from 'yjs'
 
 type WysiwygPaneProps = {
@@ -42,6 +43,7 @@ type WysiwygPaneProps = {
   initialMarkdown: string
   onLocalMarkdownChange: (markdown: string) => void
   onCursorPositionChange?: (mdOffset: number) => void
+  cmCursorOffset?: number
 }
 
 type SlashMenuState = {
@@ -232,6 +234,7 @@ export const WysiwygPane = memo(function WysiwygPane({
   initialMarkdown,
   onLocalMarkdownChange,
   onCursorPositionChange,
+  cmCursorOffset,
 }: WysiwygPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const slashMenuElementRef = useRef<HTMLDivElement | null>(null)
@@ -293,6 +296,22 @@ export const WysiwygPane = memo(function WysiwygPane({
   useEffect(() => {
     onCursorPositionChangeRef.current = onCursorPositionChange
   }, [onCursorPositionChange])
+
+  useEffect(() => {
+    if (cmCursorOffset === undefined || !view) return
+
+    const map = buildCursorMap(view.state.doc)
+    const pmPos = reverseCursorMapLookup(map, cmCursorOffset)
+    if (pmPos === null) return
+
+    const ySyncState = ySyncPluginKey.getState(view.state) as
+      | { type: import('yjs').XmlFragment; binding: { mapping: Map<unknown, unknown> } }
+      | undefined
+    if (!ySyncState?.type || !ySyncState?.binding) return
+
+    const relPos = absolutePositionToRelativePosition(pmPos, ySyncState.type, ySyncState.binding.mapping)
+    awareness.setLocalStateField('pmCursor', { anchor: relPos, head: relPos })
+  }, [cmCursorOffset, view, awareness])
 
   useEffect(() => {
     slashMenuRef.current = slashMenu
@@ -410,6 +429,19 @@ export const WysiwygPane = memo(function WysiwygPane({
           )
           if (mdOffset !== null) {
             onCursorPositionChangeRef.current?.(mdOffset)
+          }
+
+          // Set pmCursor so remote PM panes can display this cursor
+          const ySyncState = ySyncPluginKey.getState(nextState) as
+            | { type: import('yjs').XmlFragment; binding: { mapping: Map<unknown, unknown> } }
+            | undefined
+          if (ySyncState?.type && ySyncState?.binding) {
+            const relPos = absolutePositionToRelativePosition(
+              nextState.selection.from,
+              ySyncState.type,
+              ySyncState.binding.mapping,
+            )
+            awareness.setLocalStateField('pmCursor', { anchor: relPos, head: relPos })
           }
         }
 

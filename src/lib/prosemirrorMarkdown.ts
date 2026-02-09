@@ -691,6 +691,40 @@ export function buildCursorMap(doc: ProseMirrorNode): CursorMap {
   return { segments, mdLength: fullMd.length }
 }
 
+export function reverseCursorMapLookup(map: CursorMap, mdOffset: number): number | null {
+  const { segments } = map
+  if (segments.length === 0) return null
+
+  // Binary search for the segment containing mdOffset
+  let lo = 0
+  let hi = segments.length - 1
+
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1
+    const seg = segments[mid]
+
+    if (mdOffset < seg.mdStart) {
+      hi = mid - 1
+    } else if (mdOffset >= seg.mdEnd) {
+      lo = mid + 1
+    } else {
+      // Inside segment: exact mapping
+      return seg.pmStart + (mdOffset - seg.mdStart)
+    }
+  }
+
+  // mdOffset is between segments — snap to nearest boundary
+  const before = hi >= 0 ? segments[hi] : null
+  const after = lo < segments.length ? segments[lo] : null
+
+  if (!before) return after ? after.pmStart : 0
+  if (!after) return before.pmEnd
+
+  const distBefore = mdOffset - before.mdEnd
+  const distAfter = after.mdStart - mdOffset
+  return distBefore <= distAfter ? before.pmEnd : after.pmStart
+}
+
 export function cursorMapLookup(map: CursorMap, pmPos: number): number | null {
   const { segments } = map
   if (segments.length === 0) return null

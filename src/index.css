@@ -114,6 +114,26 @@ body {
   outline: none;
 }
 
+/* Hide remote cursors in the non-active pane (persists after focus leaves) */
+.editor-grid--pm-active .pane__editor--markdown .cm-ySelectionCaret,
+.editor-grid--pm-active .pane__editor--markdown .cm-ySelectionCaretDot,
+.editor-grid--pm-active .pane__editor--markdown .cm-ySelectionInfo {
+  display: none !important;
+}
+
+.editor-grid--pm-active .pane__editor--markdown .cm-ySelection,
+.editor-grid--pm-active .pane__editor--markdown .cm-yLineSelection {
+  background-color: transparent !important;
+}
+
+.editor-grid--cm-active .pane__editor--wysiwyg .ProseMirror-yjs-cursor {
+  display: none;
+}
+
+.editor-grid--cm-active .pane__editor--wysiwyg .ProseMirror-yjs-selection {
+  background-color: transparent !important;
+}
+
 .wysiwyg-host .ProseMirror > .ProseMirror-yjs-cursor:first-child {
   margin-top: 16px;
 }

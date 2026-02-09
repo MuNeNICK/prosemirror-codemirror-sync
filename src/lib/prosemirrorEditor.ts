@@ -828,9 +828,28 @@ function createPlugins(collab?: ProseMirrorCollabRuntime) {
   ]
 
   if (collab) {
+    // Thin awareness proxy: disables yCursorPlugin's own cursor lifecycle
+    // (auto-set on focus / auto-clear on blur) so that pmCursor is managed
+    // externally by WysiwygPane.
+    const pmAwareness = new Proxy(collab.awareness, {
+      get(target, prop, receiver) {
+        if (prop === 'getLocalState') {
+          return () => {
+            const state = target.getLocalState()
+            return state ? { ...state, pmCursor: null } : state
+          }
+        }
+        if (prop === 'setLocalStateField') {
+          return () => {} // no-op
+        }
+        const value = Reflect.get(target, prop, receiver)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    }) as Awareness
+
     return [
       ySyncPlugin(collab.xmlFragment, { mapping: collab.mapping }),
-      yCursorPlugin(collab.awareness, {}, 'pmCursor'),
+      yCursorPlugin(pmAwareness, {}, 'pmCursor'),
       yUndoPlugin(),
       ...plugins,
     ]
