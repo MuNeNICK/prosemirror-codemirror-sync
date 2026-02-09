@@ -92,7 +92,7 @@ syncCmCursor(view, cmOffset)
 | Export | Description |
 |---|---|
 | `createYjsBridge(config, options?)` | Create a bridge that keeps `Y.Text` (CM) and `Y.XmlFragment` (PM) in sync. Throws if shared types are detached or belong to a different `Y.Doc` |
-| `replaceSharedText(text, next, origin, normalize?)` | Minimal-diff replace of `Y.Text` content. Returns `ReplaceTextResult` |
+| `replaceSharedText(sharedText, next, origin, normalize?)` | Minimal-diff replace of `Y.Text` content. Returns `ReplaceTextResult` |
 | `replaceSharedProseMirror(doc, fragment, text, origin, config)` | Replace `Y.XmlFragment` from serialized text. Returns `ReplaceProseMirrorResult` |
 
 ### Bridge Sync Plugin
@@ -114,7 +114,7 @@ syncCmCursor(view, cmOffset)
 | Export | Description |
 |---|---|
 | `createCursorSyncPlugin(options)` | ProseMirror plugin: PM selection → awareness (auto), CM offset → awareness (via meta) |
-| `syncCmCursor(view, anchor, head?, onWarning?)` | Dispatch a CM cursor offset (or range) to the cursor sync plugin. Input values are clamped to valid range |
+| `syncCmCursor(view, anchor, head?, onWarning?)` | Dispatch a CM cursor offset (or range) to the cursor sync plugin. Input values are floored to non-negative integers |
 | `cursorSyncPluginKey` | `PluginKey<CursorSyncState>` for reading plugin state |
 
 ### Cursor Mapping (re-exported from @pm-cm/core)
@@ -140,16 +140,25 @@ syncCmCursor(view, cmOffset)
 | `YjsBridgeConfig` | Config for `createYjsBridge` — uses `sharedProseMirror` (capital M) |
 | `YjsBridgeHandle` | Handle returned by `createYjsBridge` — includes `bootstrapResult` |
 | `YjsBridgeOptions` | Options for `createYjsBridge` (`initialText?`, `prefer?`) |
-| `BootstrapResult` | `{ source: 'text' \| 'prosemirror' \| 'both-match' \| 'empty' \| 'initial' }` |
+| `BootstrapResult` | `{ source: 'text' \| 'prosemirror' \| 'both-match' \| 'empty' \| 'initial', parseError?: boolean }` |
 | `CollabPluginsOptions` | Options for `createCollabPlugins` — uses `sharedProseMirror` (capital M) |
 | `CursorSyncPluginOptions` | Options for `createCursorSyncPlugin` |
 | `CursorSyncState` | Plugin state: `{ pendingCm, mappedTextOffset }` |
 | `ReplaceResult` | Union: `ReplaceTextResult \| ReplaceProseMirrorResult` |
 | `ReplaceTextResult` | `{ ok: true } \| { ok: false; reason: 'unchanged' \| 'detached' }` |
-| `ReplaceProseMirrorResult` | `{ ok: true } \| { ok: false; reason: 'parse-error' }` |
+| `ReplaceProseMirrorResult` | `{ ok: true } \| { ok: false; reason: 'parse-error' \| 'detached' }` |
 | `YCursorPluginOpts` | Typed options for `yCursorPlugin` (`awarenessStateFilter`, `cursorBuilder`, `selectionBuilder`, `getSelection`) |
 | `YUndoPluginOpts` | Typed options for `yUndoPlugin` (`protectedNodes`, `trackedOrigins`, `undoManager`) |
-| `ProseMirrorMapping` | `Map<AbstractType<any>, Node \| Node[]>` — Yjs ↔ PM node mapping |
-| `OnError` | `(context: string, error: unknown) => void` — re-exported from `@pm-cm/core` |
+| `ProseMirrorMapping` | `Map<AbstractType<unknown>, Node \| Node[]>` — Yjs ↔ PM node mapping |
+| `ErrorCode` | `'parse-error' \| 'serialize-error'` — re-exported from `@pm-cm/core` |
+| `ErrorEvent` | `{ code: ErrorCode, message: string, cause: unknown }` — structured error event |
+| `OnError` | `(event: ErrorEvent) => void` — re-exported from `@pm-cm/core` |
+| `WarningCode` | `'bridge-already-wired' \| 'sync-failed' \| 'ysync-plugin-missing' \| 'cursor-sync-not-installed'` |
+| `WarningEvent` | `{ code: WarningCode, message: string }` — structured warning event |
+| `OnWarning` | `(event: WarningEvent) => void` — warning handler callback |
 | `Serialize`, `Parse`, `Normalize` | Re-exported from `@pm-cm/core` |
 | `TextSegment`, `CursorMap`, `LocateText` | Re-exported from `@pm-cm/core` |
+
+### Compatibility
+
+This package depends on internal state shapes of `y-prosemirror` (specifically `ySyncPluginKey` state and transaction meta). These internals are accessed via runtime type guards that degrade gracefully (returning `null` / logging a warning) when the expected shape is absent. The tested and supported version is `y-prosemirror@^1.3.7`.

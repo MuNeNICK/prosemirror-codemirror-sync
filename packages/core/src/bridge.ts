@@ -5,7 +5,7 @@ import type { Normalize, Serialize, Parse, OnError } from './types.js'
 
 const BRIDGE_META = 'pm-cm-bridge'
 const defaultNormalize: Normalize = (s) => s.replace(/\r\n?/g, '\n')
-const defaultOnError: OnError = (context, error) => console.error(`[bridge] ${context}`, error)
+const defaultOnError: OnError = (event) => console.error(`[bridge] ${event.code}: ${event.message}`, event.cause)
 
 /** Configuration for {@link createViewBridge}. */
 export type ViewBridgeConfig = {
@@ -77,7 +77,7 @@ export function createViewBridge(config: ViewBridgeConfig): ViewBridgeHandle {
       try {
         nextDoc = parse(incoming, schema)
       } catch (error) {
-        onError('failed to parse text into ProseMirror document', error)
+        onError({ code: 'parse-error', message: 'failed to parse text into ProseMirror document', cause: error })
         return { ok: false, reason: 'parse-error' }
       }
 

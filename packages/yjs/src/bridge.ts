@@ -7,7 +7,7 @@ import type { BootstrapResult, YjsBridgeConfig, YjsBridgeHandle } from './types.
 import { ORIGIN_INIT, ORIGIN_TEXT_TO_PM, ORIGIN_PM_TO_TEXT } from './types.js'
 
 const defaultNormalize: Normalize = (s) => s.replace(/\r\n?/g, '\n')
-const defaultOnError: OnError = (context, error) => console.error(`[bridge] ${context}`, error)
+const defaultOnError: OnError = (event) => console.error(`[bridge] ${event.code}: ${event.message}`, event.cause)
 
 /** Result of {@link replaceSharedText}. */
 export type ReplaceTextResult =
@@ -99,7 +99,7 @@ export function replaceSharedProseMirror(
   try {
     nextDoc = config.parse(normalize(text), config.schema)
   } catch (error) {
-    onError('failed to parse text into ProseMirror document', error)
+    onError({ code: 'parse-error', message: 'failed to parse text into ProseMirror document', cause: error })
     return { ok: false, reason: 'parse-error' }
   }
 
@@ -178,7 +178,7 @@ export function createYjsBridge(
       const pmDoc = yXmlFragmentToProseMirrorRootNode(fragment, schema)
       return normalize(serialize(pmDoc))
     } catch (error) {
-      onError('failed to convert ProseMirror fragment to text', error)
+      onError({ code: 'serialize-error', message: 'failed to convert ProseMirror fragment to text', cause: error })
       return null
     }
   }
@@ -291,9 +291,14 @@ export function createYjsBridge(
       return result
     },
     isYjsSyncChange(tr: Transaction): boolean {
-      // Internal meta shape from y-prosemirror's ySyncPlugin (tested against ^1.x).
-      const meta = tr.getMeta(ySyncPluginKey) as { isChangeOrigin?: boolean } | undefined
-      return meta?.isChangeOrigin === true
+      // Internal meta shape from y-prosemirror's ySyncPlugin (tested against ^1.3.x).
+      const meta = tr.getMeta(ySyncPluginKey)
+      return (
+        typeof meta === 'object' &&
+        meta !== null &&
+        'isChangeOrigin' in meta &&
+        (meta as Record<string, unknown>).isChangeOrigin === true
+      )
     },
     dispose() {
       sharedText.unobserve(textObserver)

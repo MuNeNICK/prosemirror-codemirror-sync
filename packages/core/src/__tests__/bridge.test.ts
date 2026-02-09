@@ -67,6 +67,9 @@ describe('createViewBridge', () => {
     const result = bridge.applyText(view, 'anything')
     expect(result).toEqual({ ok: false, reason: 'parse-error' })
     expect(onError).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'parse-error', message: expect.any(String), cause: expect.any(Error) }),
+    )
   })
 
   it('isBridgeChange detects bridge-originated transactions', () => {

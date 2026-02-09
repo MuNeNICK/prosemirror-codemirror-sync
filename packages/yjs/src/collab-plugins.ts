@@ -9,10 +9,10 @@ import type { XmlFragment as YXmlFragment } from 'yjs'
 import { createAwarenessProxy } from './awareness-proxy.js'
 import { createBridgeSyncPlugin } from './bridge-sync-plugin.js'
 import { createCursorSyncPlugin } from './cursor-sync-plugin.js'
-import type { YjsBridgeHandle } from './types.js'
+import type { YjsBridgeHandle, OnWarning } from './types.js'
 
 /** Yjs ↔ ProseMirror node mapping used by `y-prosemirror`. */
-export type ProseMirrorMapping = Map<AbstractType<any>, Node | Node[]>
+export type ProseMirrorMapping = Map<AbstractType<unknown>, Node | Node[]>
 
 /** Options forwarded to `yCursorPlugin` from y-prosemirror. */
 export type YCursorPluginOpts = {
@@ -62,7 +62,7 @@ export type CollabPluginsOptions = {
   /** Extra options forwarded to `yUndoPlugin`. */
   yUndoPluginOpts?: YUndoPluginOpts
   /** Called for non-fatal warnings. Propagated to child plugins. Default `console.warn`. */
-  onWarning?: (message: string) => void
+  onWarning?: OnWarning
 }
 
 /**
@@ -82,13 +82,14 @@ export function createCollabPlugins(
   if (enableCursorSync && !options.serialize) {
     throw new Error('createCollabPlugins: cursorSync requires serialize to be provided')
   }
-  const { doc, mapping } = initProseMirrorDoc(sharedProseMirror, schema)
+  const { doc, mapping: rawMapping } = initProseMirrorDoc(sharedProseMirror, schema)
+  const mapping = rawMapping as ProseMirrorMapping
   const pmAwareness = enableCursorSync
     ? createAwarenessProxy(options.awareness, cursorFieldName)
     : options.awareness
 
   const plugins: Plugin[] = [
-    ySyncPlugin(sharedProseMirror, { mapping }),
+    ySyncPlugin(sharedProseMirror, { mapping: rawMapping }),
     yCursorPlugin(pmAwareness, options.yCursorPluginOpts ?? {}, cursorFieldName),
     yUndoPlugin(options.yUndoPluginOpts),
   ]

@@ -7,6 +7,7 @@ import { createRelativePositionFromTypeIndex } from 'yjs'
 import type { Text as YText, XmlFragment as YXmlFragment } from 'yjs'
 import type { Serialize, LocateText, CursorMap } from '@pm-cm/core'
 import { buildCursorMap, cursorMapLookup, reverseCursorMapLookup } from '@pm-cm/core'
+import type { OnWarning } from './types.js'
 
 /** Plugin state for the cursor sync plugin. Read via {@link cursorSyncPluginKey}. */
 export type CursorSyncState = {
@@ -22,16 +23,32 @@ export const cursorSyncPluginKey = new PluginKey<CursorSyncState>('pm-cm-cursor-
 /**
  * Internal shape of `ySyncPluginKey` state from y-prosemirror.
  * Not exported by upstream — kept here for explicit tracking.
- * Tested against y-prosemirror ^1.x.
+ * Tested against y-prosemirror ^1.3.x.
  */
-type YSyncPluginState = { type: YXmlFragment; binding: { mapping: Map<any, any> } }
+type YSyncPluginState = { type: YXmlFragment; binding: { mapping: Map<unknown, unknown> } }
+
+function getYSyncState(view: EditorView): YSyncPluginState | null {
+  const raw = ySyncPluginKey.getState(view.state) as Record<string, unknown> | undefined
+  if (!raw) return null
+  if (
+    typeof raw === 'object' &&
+    'type' in raw && raw.type &&
+    'binding' in raw && raw.binding &&
+    typeof raw.binding === 'object' &&
+    'mapping' in (raw.binding as Record<string, unknown>) &&
+    (raw.binding as Record<string, unknown>).mapping instanceof Map
+  ) {
+    return raw as unknown as YSyncPluginState
+  }
+  return null
+}
 
 function toRelativePosition(
   view: EditorView,
   pmPos: number,
 ): unknown | null {
-  const ySyncState = ySyncPluginKey.getState(view.state) as YSyncPluginState | undefined
-  if (!ySyncState?.type || !ySyncState?.binding) return null
+  const ySyncState = getYSyncState(view)
+  if (!ySyncState) return null
 
   return absolutePositionToRelativePosition(
     pmPos,
@@ -70,6 +87,8 @@ function broadcastTextCursor(
   awareness.setLocalStateField(cmCursorFieldName, { anchor: relAnchor, head: relHead })
 }
 
+const defaultOnWarning: OnWarning = (event) => console.warn(`[pm-cm] ${event.code}: ${event.message}`)
+
 /** Options for {@link createCursorSyncPlugin}. */
 export type CursorSyncPluginOptions = {
   awareness: Awareness
@@ -85,7 +104,7 @@ export type CursorSyncPluginOptions = {
    */
   sharedText?: YText
   /** Called for non-fatal warnings. Default `console.warn`. */
-  onWarning?: (message: string) => void
+  onWarning?: OnWarning
 }
 
 /**
@@ -96,7 +115,7 @@ export type CursorSyncPluginOptions = {
  */
 export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin {
   const { awareness, serialize, locate, sharedText } = options
-  const warn = options.onWarning ?? console.warn
+  const warn = options.onWarning ?? defaultOnWarning
   const cursorFieldName = options.cursorFieldName ?? 'pmCursor'
   const cmCursorFieldName = options.cmCursorFieldName ?? 'cursor'
 
@@ -161,7 +180,7 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
               const ok = broadcastPmCursor(awareness, cursorFieldName, view, pmAnchor, pmHead)
               if (!ok && !warnedSyncPluginMissing) {
                 warnedSyncPluginMissing = true
-                warn('[pm-cm] cursorSyncPlugin: ySyncPlugin state not available — cursor broadcast skipped')
+                warn({ code: 'ysync-plugin-missing', message: 'ySyncPlugin state not available — cursor broadcast skipped' })
               }
             }
             // Also broadcast CM-format cursor so remote yCollab can render it
@@ -187,7 +206,7 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
             const ok = broadcastPmCursor(awareness, cursorFieldName, view, anchor, head)
             if (!ok && !warnedSyncPluginMissing) {
               warnedSyncPluginMissing = true
-              warn('[pm-cm] cursorSyncPlugin: ySyncPlugin state not available — cursor broadcast skipped')
+              warn({ code: 'ysync-plugin-missing', message: 'ySyncPlugin state not available — cursor broadcast skipped' })
             }
             // Also broadcast CM-format cursor so remote yCollab can render it.
             // When bridgeSyncPlugin runs before this plugin, Y.Text is already
@@ -216,9 +235,9 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
  * @param head - CodeMirror text offset for the head (defaults to `anchor` for a collapsed cursor).
  * @param onWarning - Optional warning callback. Default `console.warn`.
  */
-export function syncCmCursor(view: EditorView, anchor: number, head?: number, onWarning?: (message: string) => void): void {
+export function syncCmCursor(view: EditorView, anchor: number, head?: number, onWarning?: OnWarning): void {
   if (!cursorSyncPluginKey.getState(view.state)) {
-    (onWarning ?? console.warn)('[pm-cm] syncCmCursor: cursor sync plugin is not installed on this EditorView')
+    (onWarning ?? defaultOnWarning)({ code: 'cursor-sync-not-installed', message: 'cursor sync plugin is not installed on this EditorView' })
     return
   }
   const sanitize = (v: number) => Math.max(0, Math.floor(v))

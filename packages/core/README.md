@@ -59,7 +59,7 @@ const pmPos = reverseCursorMapLookup(map, cmOffset)
 #### Limitations
 
 - Uses `indexOf`-based forward matching: if the serializer transforms text (e.g. escaping, entity encoding), the mapping may be inaccurate.
-- Segments with no text nodes (e.g. empty paragraphs, horizontal rules) produce no mapping entry and return `null`.
+- Segments with no text nodes (e.g. empty paragraphs, horizontal rules) produce no mapping entry. Lookups return `null` only when the entire map has zero segments.
 - Positions that fall between segments (inside serialization syntax like `**`, `- `, `| `) snap to the nearest text boundary.
 
 ## API
@@ -74,7 +74,9 @@ const pmPos = reverseCursorMapLookup(map, cmOffset)
 | `Serialize` | Type: `(doc: Node) => string` |
 | `Parse` | Type: `(text: string, schema: Schema) => Node` |
 | `Normalize` | Type: `(text: string) => string` |
-| `OnError` | Type: `(context: string, error: unknown) => void` |
+| `ErrorCode` | Type: `'parse-error' \| 'serialize-error'` |
+| `ErrorEvent` | Type: `{ code: ErrorCode, message: string, cause: unknown }` |
+| `OnError` | Type: `(event: ErrorEvent) => void` |
 | `LocateText` | Type: `(serialized: string, nodeText: string, searchFrom: number) => number` |
 | `ViewBridgeConfig` | `{ schema, serialize, parse, normalize?, onError? }` |
 | `ViewBridgeHandle` | `{ applyText(view, text, options?): ApplyTextResult, extractText(view), isBridgeChange(tr) }` |

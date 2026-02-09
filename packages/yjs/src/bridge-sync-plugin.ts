@@ -1,6 +1,6 @@
 import { Plugin, PluginKey } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
-import type { YjsBridgeHandle } from './types.js'
+import type { YjsBridgeHandle, OnWarning } from './types.js'
 
 type BridgeSyncState = { needsSync: boolean }
 
@@ -11,13 +11,15 @@ export type BridgeSyncPluginOptions = {
   /** Called when `syncToSharedText` fails (excludes `reason: 'unchanged'`). */
   onSyncFailure?: (result: BridgeSyncFailure, view: EditorView) => void
   /** Called for non-fatal warnings. Default `console.warn`. */
-  onWarning?: (message: string) => void
+  onWarning?: OnWarning
 }
 
 /** ProseMirror plugin key for {@link createBridgeSyncPlugin}. Use to read the plugin state. */
 export const bridgeSyncPluginKey = new PluginKey<BridgeSyncState>('pm-cm-bridge-sync')
 
 const wiredBridges = new WeakSet<YjsBridgeHandle>()
+
+const defaultOnWarning: OnWarning = (event) => console.warn(`[pm-cm] ${event.code}: ${event.message}`)
 
 /**
  * ProseMirror plugin that automatically syncs PM doc changes to Y.Text
@@ -30,9 +32,9 @@ export function createBridgeSyncPlugin(
   bridge: YjsBridgeHandle,
   options: BridgeSyncPluginOptions = {},
 ): Plugin {
-  const warn = options.onWarning ?? console.warn
+  const warn = options.onWarning ?? defaultOnWarning
   if (wiredBridges.has(bridge)) {
-    warn('[pm-cm] createBridgeSyncPlugin: this bridge is already wired to another plugin instance')
+    warn({ code: 'bridge-already-wired', message: 'this bridge is already wired to another plugin instance' })
   }
   wiredBridges.add(bridge)
 
@@ -59,7 +61,7 @@ export function createBridgeSyncPlugin(
             if (!result.ok) {
               if (result.reason === 'detached') {
                 options.onSyncFailure?.(result, view)
-                warn(`[pm-cm] bridge sync failed: ${result.reason}`)
+                warn({ code: 'sync-failed', message: `bridge sync failed: ${result.reason}` })
               }
             }
           }

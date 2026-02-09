@@ -9,9 +9,21 @@ export type Parse = (text: string, schema: Schema) => Node
 /** Normalizes a text string (e.g. line endings). Default strips `\r`. */
 export type Normalize = (text: string) => string
 
+/** Known error codes emitted by the bridge. */
+export type ErrorCode = 'parse-error' | 'serialize-error'
+
+/** Structured error event for non-fatal errors (e.g. parse failures). */
+export type ErrorEvent = {
+  code: ErrorCode
+  message: string
+  cause: unknown
+}
+
 /**
  * Error handler callback for non-fatal errors (e.g. parse failures).
- * @param context - A short label identifying where the error occurred.
- * @param error - The original error value.
+ *
+ * Known codes:
+ * - `'parse-error'` — failed to parse text into a ProseMirror document.
+ * - `'serialize-error'` — failed to serialize a ProseMirror document to text.
  */
-export type OnError = (context: string, error: unknown) => void
+export type OnError = (event: ErrorEvent) => void

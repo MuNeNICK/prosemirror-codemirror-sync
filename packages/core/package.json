@@ -13,7 +13,7 @@
     }
   },
   "files": [
-    "dist"
+    "dist/index.*"
   ],
   "scripts": {
     "build": "tsup"

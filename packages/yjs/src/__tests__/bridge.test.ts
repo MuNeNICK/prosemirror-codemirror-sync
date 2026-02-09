@@ -79,6 +79,9 @@ describe('replaceSharedProseMirror', () => {
     const result = replaceSharedProseMirror(ydoc, fragment, 'hello', 'test', { schema, parse: badParse, onError })
     expect(result).toEqual({ ok: false, reason: 'parse-error' })
     expect(onError).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'parse-error', message: expect.any(String), cause: expect.any(Error) }),
+    )
   })
 
   it('returns detached when fragment has no doc', () => {

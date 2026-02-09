@@ -12,6 +12,9 @@ export type {
   BootstrapResult,
   YjsBridgeConfig,
   YjsBridgeHandle,
+  WarningCode,
+  WarningEvent,
+  OnWarning,
 } from './types.js'
 
 // Cursor mapping re-exported from @pm-cm/core
@@ -27,4 +30,4 @@ export { createCursorSyncPlugin, cursorSyncPluginKey, syncCmCursor } from './cur
 export type { CursorSyncState, CursorSyncPluginOptions } from './cursor-sync-plugin.js'
 
 // Re-export types from @pm-cm/core
-export type { Serialize, Parse, Normalize, OnError } from '@pm-cm/core'
+export type { Serialize, Parse, Normalize, OnError, ErrorCode, ErrorEvent } from '@pm-cm/core'

@@ -4,6 +4,26 @@ import type { Serialize, Parse, Normalize, OnError } from '@pm-cm/core'
 import type { Doc, Text as YText, XmlFragment as YXmlFragment } from 'yjs'
 import type { ReplaceTextResult } from './bridge.js'
 
+/** Known warning codes emitted by the yjs bridge and plugins. */
+export type WarningCode = 'bridge-already-wired' | 'sync-failed' | 'ysync-plugin-missing' | 'cursor-sync-not-installed'
+
+/** Structured warning event for non-fatal warnings. */
+export type WarningEvent = {
+  code: WarningCode
+  message: string
+}
+
+/**
+ * Warning handler callback for non-fatal warnings.
+ *
+ * Known codes:
+ * - `'bridge-already-wired'` — the same bridge handle is wired to multiple plugin instances.
+ * - `'sync-failed'` — `syncToSharedText` failed (e.g. Y.Text detached).
+ * - `'ysync-plugin-missing'` — ySyncPlugin state is not available; cursor broadcast skipped.
+ * - `'cursor-sync-not-installed'` — cursor sync plugin is not installed on the EditorView.
+ */
+export type OnWarning = (event: WarningEvent) => void
+
 /** Yjs transaction origin: text → ProseMirror direction. */
 export const ORIGIN_TEXT_TO_PM = 'bridge:text-to-prosemirror'
 

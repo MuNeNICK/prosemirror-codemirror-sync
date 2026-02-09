@@ -50,7 +50,10 @@ describe('createBridgeSyncPlugin', () => {
     createBridgeSyncPlugin(bridge, { onWarning })
 
     expect(onWarning).toHaveBeenCalledWith(
-      expect.stringContaining('already wired'),
+      expect.objectContaining({
+        code: 'bridge-already-wired',
+        message: expect.stringContaining('already wired'),
+      }),
     )
   })
 
@@ -104,7 +107,10 @@ describe('createBridgeSyncPlugin', () => {
       expect.any(Object),
     )
     expect(onWarning).toHaveBeenCalledWith(
-      expect.stringContaining('detached'),
+      expect.objectContaining({
+        code: 'sync-failed',
+        message: expect.stringContaining('detached'),
+      }),
     )
   })
 
