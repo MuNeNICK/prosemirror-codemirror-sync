@@ -640,73 +640,90 @@ export function markdownToProseMirrorDoc(markdown: string, schema: Schema): Pros
   }
 }
 
-export type BlockPositionEntry = {
-  pmStart: number
-  pmEnd: number
-  mdStart: number
-  mdEnd: number
+export type TextSegment = {
+  pmStart: number // PM position (inclusive)
+  pmEnd: number   // PM position (exclusive)
+  mdStart: number // MD offset (inclusive)
+  mdEnd: number   // MD offset (exclusive)
 }
 
-export type BlockPositionMap = BlockPositionEntry[]
-
-function singleBlockToMarkdown(node: ProseMirrorNode): string {
-  const mapped = blockFromProseMirror(node)
-  if (!mapped) return ''
-  const root: Root = { type: 'root', children: [mapped] }
-  const md = markdownStringifier.stringify(root)
-  return typeof md === 'string' ? md.replace(/\n$/, '') : ''
+export type CursorMap = {
+  segments: TextSegment[]
+  mdLength: number
 }
 
-export function buildBlockPositionMap(doc: ProseMirrorNode): BlockPositionMap {
+export function buildCursorMap(doc: ProseMirrorNode): CursorMap {
   const fullMd = proseMirrorDocToMarkdown(doc)
-  const map: BlockPositionMap = []
-  let searchFrom = 0
+  const segments: TextSegment[] = []
+  let mdSearchFrom = 0
 
-  doc.forEach((child, offset) => {
-    const pmStart = offset + 1 // +1 for doc open tag
-    const pmEnd = pmStart + child.nodeSize
-    const blockMd = singleBlockToMarkdown(child)
+  function walkChildren(node: ProseMirrorNode, contentStart: number): void {
+    node.forEach((child, offset) => {
+      const childPos = contentStart + offset
 
-    if (blockMd.length === 0) {
-      map.push({ pmStart, pmEnd, mdStart: searchFrom, mdEnd: searchFrom })
-      return
-    }
+      if (child.isText && child.text) {
+        const text = child.text
+        const idx = fullMd.indexOf(text, mdSearchFrom)
+        if (idx >= 0) {
+          segments.push({
+            pmStart: childPos,
+            pmEnd: childPos + text.length,
+            mdStart: idx,
+            mdEnd: idx + text.length,
+          })
+          mdSearchFrom = idx + text.length
+        }
+        return
+      }
 
-    const idx = fullMd.indexOf(blockMd, searchFrom)
-    if (idx >= 0) {
-      map.push({ pmStart, pmEnd, mdStart: idx, mdEnd: idx + blockMd.length })
-      searchFrom = idx + blockMd.length
-    } else {
-      map.push({ pmStart, pmEnd, mdStart: searchFrom, mdEnd: searchFrom })
-    }
-  })
+      if (child.isLeaf) {
+        return
+      }
 
-  return map
+      // Container node: content starts at childPos + 1 (open tag)
+      walkChildren(child, childPos + 1)
+    })
+  }
+
+  // doc's content starts at position 0
+  walkChildren(doc, 0)
+
+  return { segments, mdLength: fullMd.length }
 }
 
-export function prosemirrorPosToMarkdownOffset(
-  map: BlockPositionMap,
-  pmPos: number,
-): number | null {
-  for (const entry of map) {
-    if (pmPos >= entry.pmStart && pmPos <= entry.pmEnd) {
-      const blockPmSize = entry.pmEnd - entry.pmStart
-      if (blockPmSize === 0) return entry.mdStart
+export function cursorMapLookup(map: CursorMap, pmPos: number): number | null {
+  const { segments } = map
+  if (segments.length === 0) return null
 
-      const ratio = (pmPos - entry.pmStart) / blockPmSize
-      const mdBlockLength = entry.mdEnd - entry.mdStart
-      return entry.mdStart + Math.round(ratio * mdBlockLength)
+  // Binary search for the segment containing pmPos
+  let lo = 0
+  let hi = segments.length - 1
+
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1
+    const seg = segments[mid]
+
+    if (pmPos < seg.pmStart) {
+      hi = mid - 1
+    } else if (pmPos >= seg.pmEnd) {
+      lo = mid + 1
+    } else {
+      // Inside segment: exact mapping
+      return seg.mdStart + (pmPos - seg.pmStart)
     }
   }
 
-  // If position is before first block or after last, clamp
-  if (map.length > 0) {
-    if (pmPos < map[0].pmStart) return map[0].mdStart
-    const last = map[map.length - 1]
-    if (pmPos > last.pmEnd) return last.mdEnd
-  }
+  // pmPos is between segments — snap to nearest boundary
+  // After binary search: hi < lo, pmPos falls between segments[hi] and segments[lo]
+  const before = hi >= 0 ? segments[hi] : null
+  const after = lo < segments.length ? segments[lo] : null
 
-  return null
+  if (!before) return after ? after.mdStart : 0
+  if (!after) return before.mdEnd
+
+  const distBefore = pmPos - before.pmEnd
+  const distAfter = after.pmStart - pmPos
+  return distBefore <= distAfter ? before.mdEnd : after.mdStart
 }
 
 export function proseMirrorDocToMarkdown(doc: ProseMirrorNode): string {

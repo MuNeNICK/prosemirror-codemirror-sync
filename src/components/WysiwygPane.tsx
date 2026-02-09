@@ -27,9 +27,9 @@ import {
   type SlashCommandSpec,
 } from '../lib/prosemirrorEditor'
 import {
-  buildBlockPositionMap,
-  prosemirrorPosToMarkdownOffset,
-  type BlockPositionMap,
+  buildCursorMap,
+  cursorMapLookup,
+  type CursorMap,
 } from '../lib/prosemirrorMarkdown'
 import { EditorView as ProseMirrorEditorView } from 'prosemirror-view'
 import type { Awareness } from 'y-protocols/awareness'
@@ -245,7 +245,7 @@ export const WysiwygPane = memo(function WysiwygPane({
   const manualSlashModeRef = useRef(false)
   const markdownSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingMarkdownViewRef = useRef<EditorView | null>(null)
-  const blockPositionMapRef = useRef<BlockPositionMap | null>(null)
+  const cursorMapRef = useRef<CursorMap | null>(null)
   const onCursorPositionChangeRef = useRef(onCursorPositionChange)
 
   const clearPendingMarkdownSync = useCallback(() => {
@@ -390,15 +390,22 @@ export const WysiwygPane = memo(function WysiwygPane({
 
         // Cursor → CodeMirror position sync
         const ySyncMeta = transaction.getMeta(ySyncPluginKey) as { isChangeOrigin?: boolean } | undefined
-        if (!ySyncMeta?.isChangeOrigin && editorView.hasFocus()) {
+        const shouldSyncCursor = !ySyncMeta?.isChangeOrigin && editorView.hasFocus()
+
+        if (shouldSyncCursor) {
           if (transaction.docChanged) {
-            blockPositionMapRef.current = buildBlockPositionMap(nextState.doc)
+            // Flush markdown to CM before sending cursor position
+            // to avoid cursor referencing stale content
+            clearPendingMarkdownSync()
+            onLocalMarkdownChangeRef.current(extractMarkdownFromProseMirror(editorView))
+            pendingMarkdownViewRef.current = null
+            cursorMapRef.current = buildCursorMap(nextState.doc)
           }
-          if (!blockPositionMapRef.current) {
-            blockPositionMapRef.current = buildBlockPositionMap(nextState.doc)
+          if (!cursorMapRef.current) {
+            cursorMapRef.current = buildCursorMap(nextState.doc)
           }
-          const mdOffset = prosemirrorPosToMarkdownOffset(
-            blockPositionMapRef.current,
+          const mdOffset = cursorMapLookup(
+            cursorMapRef.current,
             nextState.selection.from,
           )
           if (mdOffset !== null) {
@@ -414,7 +421,10 @@ export const WysiwygPane = memo(function WysiwygPane({
           return
         }
 
-        scheduleLocalMarkdownSync(editorView)
+        // When cursor is tracked, markdown was already flushed above
+        if (!shouldSyncCursor) {
+          scheduleLocalMarkdownSync(editorView)
+        }
       },
       handleKeyDown(view, event) {
         const currentSlashMenu = slashMenuRef.current
