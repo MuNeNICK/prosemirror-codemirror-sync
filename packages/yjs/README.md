@@ -2,6 +2,8 @@
 
 Collaborative split-editor sync between ProseMirror and CodeMirror over Yjs.
 
+[Demo](https://munenick.github.io/prosemirror-codemirror-sync/#/yjs)
+
 Extends `@pm-cm/core` with real-time collaboration: synchronizes a ProseMirror `XmlFragment` and a CodeMirror-friendly `Y.Text` through a single Yjs `Doc`, with collaborative cursor support. The serialization format is pluggable — you provide `serialize` and `parse` functions.
 
 ## Install

@@ -19,6 +19,8 @@ const INITIAL_MARKDOWN = `# Yjs Demo
 
 **@pm-cm/yjs** bridge: two clients sharing one document.
 
+Type \`/\` in the WYSIWYG pane to open Notion-like slash commands — insert headings, lists, tables, code blocks, quotes, and more.
+
 - [ ] Task 1
 - [x] Task 2
 `

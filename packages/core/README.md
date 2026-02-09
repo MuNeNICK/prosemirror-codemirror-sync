@@ -2,6 +2,8 @@
 
 Bidirectional sync between ProseMirror and CodeMirror for split-editor UIs.
 
+[Demo](https://munenick.github.io/prosemirror-codemirror-sync/)
+
 Keeps a WYSIWYG pane (ProseMirror) and a text pane (CodeMirror) in sync. The serialization format is pluggable — you provide `serialize` and `parse` functions (e.g. Markdown, AsciiDoc, plain text).
 
 ## Install

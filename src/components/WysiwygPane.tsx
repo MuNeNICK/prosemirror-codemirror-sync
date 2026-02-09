@@ -26,6 +26,7 @@ import {
   type SlashCommandSpec,
 } from '../lib/prosemirrorEditor'
 import { EditorView as ProseMirrorEditorView } from 'prosemirror-view'
+import { navigate } from 'wouter/use-browser-location'
 import type { Awareness } from 'y-protocols/awareness'
 import type { Text as YText, XmlFragment as YXmlFragment } from 'yjs'
 import type { Serialize } from '@pm-cm/core'
@@ -297,6 +298,18 @@ export const WysiwygPane = memo(function WysiwygPane({
           default:
             return false
         }
+      },
+      handleClick(_view, _pos, event) {
+        const anchor = (event.target as HTMLElement).closest?.('a')
+        if (!anchor) return false
+        const href = anchor.getAttribute('href')
+        if (!href) return false
+        if (href.startsWith('/')) {
+          event.preventDefault()
+          navigate(href)
+          return true
+        }
+        return false
       },
       attributes: {
         class: 'wysiwyg-editor__content',

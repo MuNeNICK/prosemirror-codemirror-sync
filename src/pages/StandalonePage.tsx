@@ -9,7 +9,9 @@ import { prosemirrorSchema } from '../lib/prosemirrorSchema'
 
 const INITIAL_MARKDOWN = `# Standalone Demo
 
-**@pm-cm/core** bridge: CM↔PM sync.
+**@pm-cm/core** bridge: CM↔PM sync. See also the [Yjs collaborative editing demo](/yjs) where two clients share one document in real time.
+
+Type \`/\` in the WYSIWYG pane to open Notion-like slash commands — insert headings, lists, tables, code blocks, quotes, and more.
 
 - [ ] Task 1
 - [x] Task 2
