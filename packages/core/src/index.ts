@@ -1,0 +1,5 @@
+export { createViewBridge, createBoundViewBridge } from './bridge.js'
+export type { ViewBridgeConfig, ViewBridgeHandle, BoundViewBridgeHandle, ApplyTextOptions, ApplyTextResult } from './bridge.js'
+export type { Serialize, Parse, Normalize, OnError } from './types.js'
+export { buildCursorMap, cursorMapLookup, reverseCursorMapLookup } from './cursor-map.js'
+export type { TextSegment, CursorMap, LocateText } from './cursor-map.js'

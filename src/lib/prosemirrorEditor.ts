@@ -27,31 +27,29 @@ import { liftListItem, sinkListItem, splitListItem, wrapInList } from 'prosemirr
 import { columnResizing, tableEditing } from 'prosemirror-tables'
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
 import type { Awareness } from 'y-protocols/awareness'
-import {
-  initProseMirrorDoc,
-  redo as yRedo,
-  undo as yUndo,
-  yCursorPlugin,
-  ySyncPlugin,
-  yUndoPlugin,
-} from 'y-prosemirror'
-import type { XmlFragment as YXmlFragment } from 'yjs'
-import { markdownToProseMirrorDoc, normalizeMarkdown, proseMirrorDocToMarkdown } from './prosemirrorMarkdown'
+import { redo as yRedo, undo as yUndo } from 'y-prosemirror'
+import type { Text as YText, XmlFragment as YXmlFragment } from 'yjs'
+import { createCollabPlugins } from '@pm-cm/yjs'
+import type { YjsBridgeHandle } from '@pm-cm/yjs'
+import type { Serialize } from '@pm-cm/core'
+import { markdownToProseMirrorDoc } from './prosemirrorMarkdown'
 import { prosemirrorSchema } from './prosemirrorSchema'
 
-export const EXTERNAL_SYNC_META = 'external-sync'
 export const OPEN_SLASH_MENU_META = 'open-slash-menu'
 
 const BLOCK_HANDLE_DRAG_TYPE = 'application/x-prosemirror-block-handle'
 const blockHandlePluginKey = new PluginKey('block-handle-plugin')
 
 type ProseMirrorCollabOptions = {
-  xmlFragment: YXmlFragment
+  sharedProseMirror: YXmlFragment
   awareness: Awareness
+  serialize?: Serialize
+  sharedText?: YText
+  bridge?: YjsBridgeHandle
 }
 
 type ProseMirrorCollabRuntime = ProseMirrorCollabOptions & {
-  mapping: ReturnType<typeof initProseMirrorDoc>['mapping']
+  collabPlugins: Plugin[]
 }
 
 type IconDefinition = {
@@ -828,31 +826,7 @@ function createPlugins(collab?: ProseMirrorCollabRuntime) {
   ]
 
   if (collab) {
-    // Thin awareness proxy: disables yCursorPlugin's own cursor lifecycle
-    // (auto-set on focus / auto-clear on blur) so that pmCursor is managed
-    // externally by WysiwygPane.
-    const pmAwareness = new Proxy(collab.awareness, {
-      get(target, prop, receiver) {
-        if (prop === 'getLocalState') {
-          return () => {
-            const state = target.getLocalState()
-            return state ? { ...state, pmCursor: null } : state
-          }
-        }
-        if (prop === 'setLocalStateField') {
-          return () => {} // no-op
-        }
-        const value = Reflect.get(target, prop, receiver)
-        return typeof value === 'function' ? value.bind(target) : value
-      },
-    }) as Awareness
-
-    return [
-      ySyncPlugin(collab.xmlFragment, { mapping: collab.mapping }),
-      yCursorPlugin(pmAwareness, {}, 'pmCursor'),
-      yUndoPlugin(),
-      ...plugins,
-    ]
+    return [...collab.collabPlugins, ...plugins]
   }
 
   return [history(), ...plugins]
@@ -863,13 +837,20 @@ export function createProseMirrorState(
   collab?: ProseMirrorCollabOptions,
 ): EditorState {
   if (collab) {
-    const { doc, mapping } = initProseMirrorDoc(collab.xmlFragment, prosemirrorSchema)
+    const { plugins: collabPlugins, doc } = createCollabPlugins(prosemirrorSchema, {
+      sharedProseMirror: collab.sharedProseMirror,
+      awareness: collab.awareness,
+      serialize: collab.serialize,
+      cursorSync: !!collab.serialize,
+      sharedText: collab.sharedText,
+      bridge: collab.bridge,
+    })
     return ProseMirrorEditorState.create({
       schema: prosemirrorSchema,
       doc,
       plugins: createPlugins({
         ...collab,
-        mapping,
+        collabPlugins,
       }),
     })
   }
@@ -879,26 +860,6 @@ export function createProseMirrorState(
     doc: markdownToProseMirrorDoc(markdown, prosemirrorSchema),
     plugins: createPlugins(),
   })
-}
-
-export function extractMarkdownFromProseMirror(view: EditorView): string {
-  return proseMirrorDocToMarkdown(view.state.doc)
-}
-
-export function applyMarkdownToProseMirror(view: EditorView, markdown: string): boolean {
-  const incoming = normalizeMarkdown(markdown)
-  const current = normalizeMarkdown(extractMarkdownFromProseMirror(view))
-
-  if (incoming === current) {
-    return false
-  }
-
-  const nextDoc = markdownToProseMirrorDoc(incoming, prosemirrorSchema)
-  const transaction = view.state.tr
-  transaction.replaceWith(0, transaction.doc.content.size, nextDoc.content)
-  transaction.setMeta(EXTERNAL_SYNC_META, true)
-  view.dispatch(transaction)
-  return true
 }
 
 export function runCommand(view: EditorView, command: Command): boolean {

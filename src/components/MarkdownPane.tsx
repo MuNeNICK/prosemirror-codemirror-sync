@@ -7,15 +7,18 @@ import type { Text as YText } from 'yjs'
 import { yCollab } from 'y-codemirror.next'
 
 type MarkdownPaneProps = {
-  sharedMarkdown: YText
-  awareness: Awareness
   scrollToOffset?: number
   onCursorPositionChange?: (mdOffset: number) => void
-}
+} & (
+  | { sharedMarkdown: YText; awareness: Awareness; value?: undefined; onChange?: undefined }
+  | { sharedMarkdown?: undefined; awareness?: undefined; value: string; onChange: (value: string) => void }
+)
 
 export const MarkdownPane = memo(function MarkdownPane({
   sharedMarkdown,
   awareness,
+  value,
+  onChange,
   scrollToOffset,
   onCursorPositionChange,
 }: MarkdownPaneProps) {
@@ -36,10 +39,13 @@ export const MarkdownPane = memo(function MarkdownPane({
     [],
   )
 
-  const extensions = useMemo(
-    () => [markdownLanguage(), yCollab(sharedMarkdown, awareness), cursorListener],
-    [sharedMarkdown, awareness, cursorListener],
-  )
+  const extensions = useMemo(() => {
+    const base = [markdownLanguage(), cursorListener]
+    if (sharedMarkdown && awareness) {
+      base.push(yCollab(sharedMarkdown, awareness))
+    }
+    return base
+  }, [sharedMarkdown, awareness, cursorListener])
 
   useEffect(() => {
     if (scrollToOffset === undefined) return
@@ -66,7 +72,8 @@ export const MarkdownPane = memo(function MarkdownPane({
         className="pane__editor pane__editor--markdown"
         extensions={extensions}
         height="100%"
-        value={sharedMarkdown.toString()}
+        value={sharedMarkdown ? sharedMarkdown.toString() : value}
+        onChange={onChange}
       />
     </div>
   )

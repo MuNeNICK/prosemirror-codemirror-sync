@@ -22,7 +22,12 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+
+    "paths": {
+      "@pm-cm/core": ["./packages/core/src/index.ts"],
+      "@pm-cm/yjs": ["./packages/yjs/src/index.ts"]
+    }
   },
   "include": ["src"]
 }
