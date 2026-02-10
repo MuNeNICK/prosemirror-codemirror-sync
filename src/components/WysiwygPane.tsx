@@ -26,7 +26,7 @@ import {
   type SlashCommandSpec,
 } from '../lib/prosemirrorPlugins'
 import { EditorView as ProseMirrorEditorView } from 'prosemirror-view'
-import { navigate } from 'wouter/use-browser-location'
+import { useLocation } from 'wouter'
 import type { Awareness } from 'y-protocols/awareness'
 import type { Text as YText, XmlFragment as YXmlFragment } from 'yjs'
 import type { Serialize } from '@pm-cm/core'
@@ -168,9 +168,12 @@ export const WysiwygPane = memo(function WysiwygPane({
   const slashMenuRef = useRef<SlashMenuState | null>(null)
   const slashIndexRef = useRef(0)
   const manualSlashModeRef = useRef(false)
+  const [, navigate] = useLocation()
+  const navigateRef = useRef(navigate)
   const onTransactionRef = useRef(onTransaction)
   const onViewReadyRef = useRef(onViewReady)
 
+  useEffect(() => { navigateRef.current = navigate }, [navigate])
   useEffect(() => { onTransactionRef.current = onTransaction }, [onTransaction])
   useEffect(() => { onViewReadyRef.current = onViewReady }, [onViewReady])
   useEffect(() => { slashMenuRef.current = slashMenu }, [slashMenu])
@@ -306,7 +309,7 @@ export const WysiwygPane = memo(function WysiwygPane({
         if (!href) return false
         if (href.startsWith('/')) {
           event.preventDefault()
-          navigate(href)
+          navigateRef.current(href)
           return true
         }
         return false
