@@ -81,8 +81,28 @@ export function createViewBridge(config: ViewBridgeConfig): ViewBridgeHandle {
         return { ok: false, reason: 'parse-error' }
       }
 
+      const prevDoc = view.state.doc
+      if (nextDoc.eq(prevDoc)) {
+        return { ok: false, reason: 'unchanged' }
+      }
+
+      // Diff-based replace: only touch the changed region
+      const start = prevDoc.content.findDiffStart(nextDoc.content)
+      if (start == null) {
+        return { ok: false, reason: 'unchanged' }
+      }
+      const end = prevDoc.content.findDiffEnd(nextDoc.content)
+      if (!end) {
+        return { ok: false, reason: 'unchanged' }
+      }
+
+      // Ensure start doesn't exceed end positions (can happen with overlapping prefix/suffix)
+      const from = Math.min(start, end.a)
+      const to = Math.max(start, end.a)
+      const toB = Math.max(start, end.b)
+
       const tr = view.state.tr
-      tr.replaceWith(0, tr.doc.content.size, nextDoc.content)
+      tr.replace(from, to, nextDoc.slice(from, toB))
       tr.setMeta(BRIDGE_META, true)
       if (options?.addToHistory === false) {
         tr.setMeta('addToHistory', false)

@@ -20,12 +20,33 @@ export type CursorMap = {
   skippedNodes: number
 }
 
+/** Structural context passed to {@link LocateText} for disambiguation. */
+export type LocateTextContext = {
+  /** ProseMirror position of this text node. */
+  pmStart: number
+  /** Child-index path from doc root to this text node's parent. */
+  pmPath: readonly number[]
+  /** Parent node type name, or `null` for doc-level text. */
+  parentType: string | null
+  /** Index of this text node among its parent's children. */
+  indexInParent: number
+  /** Text content of the previous sibling, or `null`. */
+  prevSiblingText: string | null
+  /** Text content of the next sibling, or `null`. */
+  nextSiblingText: string | null
+  /** 0-based ordinal of this text node in document walk order. */
+  textNodeOrdinal: number
+}
+
 /**
  * Locate a text-node string within the serialized output.
  * Return the starting index, or -1 if not found.
  * Default: `(serialized, nodeText, from) => serialized.indexOf(nodeText, from)`
+ *
+ * An optional {@link LocateTextContext} is provided for disambiguation
+ * when the same text appears multiple times in the serialized output.
  */
-export type LocateText = (serialized: string, nodeText: string, searchFrom: number) => number
+export type LocateText = (serialized: string, nodeText: string, searchFrom: number, context?: LocateTextContext) => number
 
 const defaultLocate: LocateText = (serialized, nodeText, from) =>
   serialized.indexOf(nodeText, from)
@@ -49,14 +70,25 @@ export function buildCursorMap(
   const segments: TextSegment[] = []
   let searchFrom = 0
   let skippedNodes = 0
+  let textNodeOrdinal = 0
 
-  function walkChildren(node: Node, contentStart: number): void {
-    node.forEach((child, offset) => {
+  function walkChildren(node: Node, contentStart: number, path: readonly number[]): void {
+    node.forEach((child, offset, index) => {
       const childPos = contentStart + offset
 
       if (child.isText && child.text) {
         const text = child.text
-        const idx = locate(fullText, text, searchFrom)
+        const context: LocateTextContext = {
+          pmStart: childPos,
+          pmPath: path,
+          parentType: node.type.name === 'doc' ? null : node.type.name,
+          indexInParent: index,
+          prevSiblingText: index > 0 ? (node.child(index - 1).textContent || null) : null,
+          nextSiblingText: index < node.childCount - 1 ? (node.child(index + 1).textContent || null) : null,
+          textNodeOrdinal,
+        }
+        textNodeOrdinal++
+        const idx = locate(fullText, text, searchFrom, context)
         if (idx >= 0) {
           segments.push({
             pmStart: childPos,
@@ -76,12 +108,12 @@ export function buildCursorMap(
       }
 
       // Container node: content starts at childPos + 1 (open tag)
-      walkChildren(child, childPos + 1)
+      walkChildren(child, childPos + 1, [...path, index])
     })
   }
 
   // doc's content starts at position 0
-  walkChildren(doc, 0)
+  walkChildren(doc, 0, [])
 
   return { segments, textLength: fullText.length, skippedNodes }
 }

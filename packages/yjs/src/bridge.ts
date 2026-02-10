@@ -2,6 +2,7 @@ import type { Node } from 'prosemirror-model'
 import type { Transaction } from 'prosemirror-state'
 import { prosemirrorToYXmlFragment, yXmlFragmentToProseMirrorRootNode, ySyncPluginKey } from 'y-prosemirror'
 import type { Doc, Text as YText, XmlFragment as YXmlFragment } from 'yjs'
+import { XmlElement as YXmlElement, XmlText as YXmlText } from 'yjs'
 import type { Normalize, OnError } from '@pm-cm/core'
 import type { BootstrapResult, YjsBridgeConfig, YjsBridgeHandle } from './types.js'
 import { ORIGIN_INIT, ORIGIN_TEXT_TO_PM, ORIGIN_PM_TO_TEXT } from './types.js'
@@ -18,6 +19,7 @@ export type ReplaceTextResult =
 /** Result of {@link replaceSharedProseMirror}. */
 export type ReplaceProseMirrorResult =
   | { ok: true }
+  | { ok: false; reason: 'unchanged' }
   | { ok: false; reason: 'parse-error' }
   | { ok: false; reason: 'detached' }
 
@@ -103,10 +105,172 @@ export function replaceSharedProseMirror(
     return { ok: false, reason: 'parse-error' }
   }
 
-  doc.transact(() => {
-    prosemirrorToYXmlFragment(nextDoc, fragment)
-  }, origin)
+  // Semantic equality check: skip if PM document is unchanged
+  try {
+    const currentDoc = yXmlFragmentToProseMirrorRootNode(fragment, config.schema)
+    if (currentDoc.eq(nextDoc)) {
+      return { ok: false, reason: 'unchanged' }
+    }
+  } catch {
+    // If conversion fails, proceed with replacement
+  }
+
+  // Try incremental update first; fall back to full replacement on failure
+  if (!tryIncrementalFragmentUpdate(doc, fragment, nextDoc, origin)) {
+    doc.transact(() => {
+      prosemirrorToYXmlFragment(nextDoc, fragment)
+    }, origin)
+  }
   return { ok: true }
+}
+
+/**
+ * Convert a ProseMirror node to a new (unattached) Y.XmlElement.
+ * Handles attributes and text content including marks.
+ */
+function pmNodeToYXmlElement(node: Node): YXmlElement {
+  const xmlEl = new YXmlElement(node.type.name)
+  for (const [key, value] of Object.entries(node.attrs)) {
+    if (value != null) xmlEl.setAttribute(key, value)
+  }
+  // Collect children first, then insert all at once to avoid
+  // reading .length on unattached Yjs types
+  const children: (YXmlElement | YXmlText)[] = []
+  node.forEach((child) => {
+    if (child.isText && child.text) {
+      const xmlText = new YXmlText()
+      const attrs: Record<string, unknown> = {}
+      for (const mark of child.marks) {
+        attrs[mark.type.name] = mark.attrs && Object.keys(mark.attrs).length > 0 ? mark.attrs : true
+      }
+      xmlText.insert(0, child.text, Object.keys(attrs).length > 0 ? attrs : undefined)
+      children.push(xmlText)
+    } else if (!child.isLeaf) {
+      children.push(pmNodeToYXmlElement(child))
+    }
+  })
+  if (children.length > 0) {
+    xmlEl.insert(0, children)
+  }
+  return xmlEl
+}
+
+/** Get text content of a Y.XmlElement's children. */
+function getXmlElementText(xmlEl: YXmlElement): string {
+  let text = ''
+  for (let j = 0; j < xmlEl.length; j++) {
+    const child = xmlEl.get(j)
+    if (child instanceof YXmlText) text += child.toString()
+  }
+  return text
+}
+
+/**
+ * Update a Y.XmlElement's text content in-place using minimal diff.
+ * Preserves the XmlText identity when possible.
+ */
+function updateXmlElementTextContent(xmlEl: YXmlElement, pmNode: Node): void {
+  if (xmlEl.length === 0 || !(xmlEl.get(0) instanceof YXmlText)) return
+  const xmlText = xmlEl.get(0) as YXmlText
+  const oldText = xmlText.toString()
+  const newText = pmNode.textContent
+  if (oldText === newText) return
+
+  // Minimal diff: find common prefix and suffix, replace only the changed middle
+  let start = 0
+  const minLen = Math.min(oldText.length, newText.length)
+  while (start < minLen && oldText.charCodeAt(start) === newText.charCodeAt(start)) {
+    start++
+  }
+
+  let oldEnd = oldText.length
+  let newEnd = newText.length
+  while (oldEnd > start && newEnd > start && oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)) {
+    oldEnd--
+    newEnd--
+  }
+
+  if (oldEnd > start) xmlText.delete(start, oldEnd - start)
+  if (newEnd > start) xmlText.insert(start, newText.slice(start, newEnd))
+}
+
+/**
+ * Try to update a Y.XmlFragment incrementally by diffing against a new PM document.
+ * Uses prefix/suffix matching to preserve unchanged Yjs nodes, protecting
+ * relative positions (remote cursors) and undo history.
+ *
+ * Returns `true` if the incremental update succeeded, `false` to fall back to full replacement.
+ */
+function tryIncrementalFragmentUpdate(
+  ydoc: Doc,
+  fragment: YXmlFragment,
+  nextDoc: Node,
+  origin: unknown,
+): boolean {
+  const oldCount = fragment.length
+  const newCount = nextDoc.childCount
+
+  // Validate all old children are XmlElements (expected from y-prosemirror)
+  for (let i = 0; i < oldCount; i++) {
+    if (!(fragment.get(i) instanceof YXmlElement)) return false
+  }
+
+  // Find common prefix: same node type AND same text content
+  let prefix = 0
+  while (prefix < Math.min(oldCount, newCount)) {
+    const oldChild = fragment.get(prefix) as YXmlElement
+    const newChild = nextDoc.child(prefix)
+    if (oldChild.nodeName !== newChild.type.name) break
+    if (getXmlElementText(oldChild) !== newChild.textContent) break
+    prefix++
+  }
+
+  // Find common suffix (avoid overlapping with prefix)
+  let suffix = 0
+  while (suffix < Math.min(oldCount - prefix, newCount - prefix)) {
+    const oi = oldCount - 1 - suffix
+    const ni = newCount - 1 - suffix
+    const oldChild = fragment.get(oi) as YXmlElement
+    const newChild = nextDoc.child(ni)
+    if (oldChild.nodeName !== newChild.type.name) break
+    if (getXmlElementText(oldChild) !== newChild.textContent) break
+    suffix++
+  }
+
+  const oldMiddleLen = oldCount - prefix - suffix
+  const newMiddleLen = newCount - prefix - suffix
+
+  // Nothing changed in the middle
+  if (oldMiddleLen === 0 && newMiddleLen === 0) return true
+
+  ydoc.transact(() => {
+    // For overlapping middle items with matching types, update text in-place
+    const updateCount = Math.min(oldMiddleLen, newMiddleLen)
+    for (let i = 0; i < updateCount; i++) {
+      const idx = prefix + i
+      const xmlEl = fragment.get(idx) as YXmlElement
+      const pmNode = nextDoc.child(idx)
+      if (xmlEl.nodeName === pmNode.type.name) {
+        updateXmlElementTextContent(xmlEl, pmNode)
+      } else {
+        // Type changed: delete and insert replacement
+        fragment.delete(idx, 1)
+        fragment.insert(idx, [pmNodeToYXmlElement(pmNode)])
+      }
+    }
+
+    // Delete extra old items beyond what was updated in-place
+    if (oldMiddleLen > updateCount) {
+      fragment.delete(prefix + updateCount, oldMiddleLen - updateCount)
+    }
+
+    // Insert new items beyond what was updated in-place
+    for (let i = updateCount; i < newMiddleLen; i++) {
+      fragment.insert(prefix + i, [pmNodeToYXmlElement(nextDoc.child(prefix + i))])
+    }
+  }, origin)
+
+  return true
 }
 
 /** Options for {@link createYjsBridge}. */
@@ -167,10 +331,10 @@ export function createYjsBridge(
       normalize,
       onError,
     })
-    if (result.ok) {
+    if (result.ok || result.reason === 'unchanged') {
       lastBridgedText = text
     }
-    return result.ok
+    return result.ok || result.reason === 'unchanged'
   }
 
   const sharedProseMirrorToText = (fragment: YXmlFragment): string | null => {
