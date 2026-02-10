@@ -4,11 +4,13 @@ Middleware for bidirectional synchronization between ProseMirror and CodeMirror.
 
 ## Motivation
 
-Split-editor UIs — WYSIWYG on one side, text on the other — require keeping two fundamentally different editor models in sync. ProseMirror operates on a tree-structured document, while CodeMirror operates on a flat string. This library bridges the gap:
+ProseMirror operates on a tree-structured document, while CodeMirror operates on a flat string. When both representations need to stay in sync — for example in a split-view editor, or when multiple editors of different types share the same document — you face a non-trivial bidirectional synchronization problem.
+
+This library solves it:
 
 - **Document sync**: Propagates text edits to ProseMirror and vice versa, preventing infinite update loops.
 - **Cursor mapping**: Translates cursor positions between ProseMirror's tree-based coordinate system and CodeMirror's character offsets.
-- **Collaborative cursor sync**: Broadcasts cursor positions from either editor to Yjs awareness, so remote participants see a unified cursor regardless of which pane is being edited.
+- **Collaborative cursor sync**: Broadcasts cursor positions from either editor to Yjs awareness, so remote participants see a unified cursor regardless of which editor is active.
 
 You provide the `serialize` and `parse` functions. Any text serialization format works — Markdown (via Unified/remark, markdown-it, etc.), AsciiDoc, reStructuredText, or plain text.
 
@@ -88,23 +90,18 @@ When both sides exist and conflict, the text side wins: the bridge parses `Y.Tex
 import { Doc } from 'yjs'
 import { createYjsBridge } from '@pm-cm/yjs'
 
-const doc = new Doc()
+const ydoc = new Doc()
+const sharedText = ydoc.getText('text')
+const sharedProseMirror = ydoc.getXmlFragment('prosemirror')
 
 const bridge = createYjsBridge({
-  doc,
-  sharedText: doc.getText('text'),
-  sharedProseMirror: doc.getXmlFragment('prosemirror'),
+  doc: ydoc,
+  sharedText,
+  sharedProseMirror,
   schema,
   serialize,
   parse,
 })
-
-// After a PM edit, push to Y.Text (source of truth):
-bridge.syncToSharedText(view.state.doc)
-
-// Y.Text → Y.XmlFragment direction is automatic (Y.Text observer).
-
-bridge.dispose()
 ```
 
 On creation, the bridge runs a synchronous bootstrap that reconciles whatever state already exists in the Yjs doc (one side empty, both empty, both populated). After bootstrap, a `Y.Text` observer automatically converts text changes to ProseMirror. The reverse direction (`syncToSharedText`) is called explicitly from `dispatchTransaction`.
@@ -119,26 +116,48 @@ Updates to `Y.Text` use minimal diffs (common prefix/suffix trimming) to preserv
 import { createCollabPlugins, syncCmCursor } from '@pm-cm/yjs'
 
 const { plugins, doc: pmDoc } = createCollabPlugins(schema, {
-  sharedProseMirror: xmlFragment,
+  sharedProseMirror,
   awareness,
-  serialize,   // pass to enable PM ↔ CM cursor sync
+  serialize,
   cursorSync: true,
 })
 
-const view = new EditorView(element, {
+const pmView = new EditorView(pmElement, {
   state: EditorState.create({ schema, doc: pmDoc, plugins }),
   dispatchTransaction(tr) {
-    view.updateState(view.state.apply(tr))
+    pmView.updateState(pmView.state.apply(tr))
     if (tr.docChanged && !bridge.isYjsSyncChange(tr)) {
-      bridge.syncToSharedText(view.state.doc)
+      bridge.syncToSharedText(pmView.state.doc)
     }
   },
 })
+```
 
-// CM cursor → PM awareness (one call)
-syncCmCursor(view, cmOffset)
+#### CodeMirror side
 
-// PM cursor → awareness is automatic when the PM view is focused.
+CodeMirror binds directly to `Y.Text` via `y-codemirror.next`. The bridge keeps `Y.XmlFragment` (ProseMirror) in sync automatically.
+
+```ts
+import { yCollab } from 'y-codemirror.next'
+import { EditorView as CmView } from '@codemirror/view'
+import { EditorState as CmState } from '@codemirror/state'
+
+const cmView = new CmView({
+  parent: cmElement,
+  state: CmState.create({
+    doc: sharedText.toString(),
+    extensions: [
+      yCollab(sharedText, awareness),
+      // ...other extensions
+    ],
+  }),
+})
+
+// Broadcast CM cursor position to ProseMirror awareness
+cmView.dom.addEventListener('focusin', () => {
+  const { from, to } = cmView.state.selection.main
+  syncCmCursor(pmView, from, to)
+})
 ```
 
 The cursor sync plugin uses `buildCursorMap` (from `@pm-cm/core`) to convert CM offsets to PM positions, then broadcasts via `absolutePositionToRelativePosition` to Yjs awareness. An awareness proxy (`createAwarenessProxy`) suppresses `y-prosemirror`'s built-in cursor management so it doesn't conflict.
@@ -206,14 +225,16 @@ The cursor sync plugin uses `buildCursorMap` (from `@pm-cm/core`) to convert CM 
 | `CursorSyncPluginOptions` | `{ awareness, serialize, cursorFieldName?, cmCursorFieldName?, locate?, sharedText?, onWarning? }` |
 | `CursorSyncState` | `{ pendingCm, mappedTextOffset }` |
 
-## Demo App
+## Demo
 
-This repo includes a demo app (`src/`) with two pages:
+Live demo: https://munenick.github.io/prosemirror-codemirror-sync/
 
-| Route | Description |
+| Page | Description |
 |---|---|
-| `/` | Split editor using `@pm-cm/core` |
-| `/yjs` | Two simulated collaborative clients using `@pm-cm/yjs` |
+| [Split editor](https://munenick.github.io/prosemirror-codemirror-sync/) | ProseMirror + CodeMirror side-by-side using `@pm-cm/core` |
+| [Yjs collab](https://munenick.github.io/prosemirror-codemirror-sync/yjs) | Two simulated collaborative clients using `@pm-cm/yjs` |
+
+To run locally:
 
 ```bash
 npm install
