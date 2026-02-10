@@ -29,7 +29,7 @@ import {
   toggleTaskItemChecked,
   wrapSelectionInBulletList,
   wrapSelectionInTaskList,
-} from '../lib/prosemirrorEditor'
+} from '../lib/prosemirrorPlugins'
 import { prosemirrorSchema } from '../lib/prosemirrorSchema'
 
 type EditorToolbarProps = {

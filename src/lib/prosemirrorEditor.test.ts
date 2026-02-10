@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { TextSelection, type Transaction } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
+import { createProseMirrorState } from './prosemirrorEditor'
 import {
-  createProseMirrorState,
   getSlashCommandMatch,
   getSlashCommands,
   moveTopLevelBlock,
-} from './prosemirrorEditor'
+} from './prosemirrorPlugins'
 
 function stateWithCursorAtEnd(markdown: string) {
   const state = createProseMirrorState(markdown)

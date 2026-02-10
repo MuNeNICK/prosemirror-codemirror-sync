@@ -14,8 +14,8 @@ import {
 import type { EditorState as ProseMirrorState, Transaction } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
 import type { ReactNode } from 'react'
+import { createProseMirrorState } from '../lib/prosemirrorEditor'
 import {
-  createProseMirrorState,
   deleteTextRange,
   executeSlashCommand,
   getSlashCommandMatch,
@@ -24,7 +24,7 @@ import {
   type SlashCommandMatch,
   type SlashCommandId,
   type SlashCommandSpec,
-} from '../lib/prosemirrorEditor'
+} from '../lib/prosemirrorPlugins'
 import { EditorView as ProseMirrorEditorView } from 'prosemirror-view'
 import { navigate } from 'wouter/use-browser-location'
 import type { Awareness } from 'y-protocols/awareness'
