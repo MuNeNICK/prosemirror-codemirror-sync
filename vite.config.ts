@@ -5,6 +5,14 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   base: process.env.GITHUB_ACTIONS ? '/prosemirror-codemirror-sync/' : '/',
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        yjs: path.resolve(__dirname, 'yjs.html'),
+      },
+    },
+  },
   resolve: {
     alias: {
       '@pm-cm/core': path.resolve(__dirname, 'packages/core/src/index.ts'),

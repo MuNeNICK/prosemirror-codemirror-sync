@@ -26,7 +26,6 @@ import {
   type SlashCommandSpec,
 } from '../lib/prosemirrorPlugins'
 import { EditorView as ProseMirrorEditorView } from 'prosemirror-view'
-import { useLocation } from 'wouter'
 import type { Awareness } from 'y-protocols/awareness'
 import type { Text as YText, XmlFragment as YXmlFragment } from 'yjs'
 import type { Serialize } from '@pm-cm/core'
@@ -168,12 +167,9 @@ export const WysiwygPane = memo(function WysiwygPane({
   const slashMenuRef = useRef<SlashMenuState | null>(null)
   const slashIndexRef = useRef(0)
   const manualSlashModeRef = useRef(false)
-  const [, navigate] = useLocation()
-  const navigateRef = useRef(navigate)
   const onTransactionRef = useRef(onTransaction)
   const onViewReadyRef = useRef(onViewReady)
 
-  useEffect(() => { navigateRef.current = navigate }, [navigate])
   useEffect(() => { onTransactionRef.current = onTransaction }, [onTransaction])
   useEffect(() => { onViewReadyRef.current = onViewReady }, [onViewReady])
   useEffect(() => { slashMenuRef.current = slashMenu }, [slashMenu])
@@ -305,14 +301,9 @@ export const WysiwygPane = memo(function WysiwygPane({
       handleClick(_view, _pos, event) {
         const anchor = (event.target as HTMLElement).closest?.('a')
         if (!anchor) return false
-        const href = anchor.getAttribute('href')
-        if (!href) return false
-        if (href.startsWith('/')) {
-          event.preventDefault()
-          navigateRef.current(href)
-          return true
-        }
-        return false
+        event.preventDefault()
+        window.location.assign(anchor.href)
+        return true
       },
       attributes: {
         class: 'wysiwyg-editor__content',
