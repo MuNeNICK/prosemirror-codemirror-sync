@@ -4,7 +4,7 @@ Middleware for bidirectional synchronization between ProseMirror and CodeMirror.
 
 ## Motivation
 
-ProseMirror operates on a tree-structured document, while CodeMirror operates on a flat string. When both representations need to stay in sync — for example in a split-view editor, or when multiple editors of different types share the same document — you face a non-trivial bidirectional synchronization problem.
+ProseMirror operates on a tree-structured document, while CodeMirror operates on a flat string. When both representations need to stay in sync, you face a non-trivial bidirectional synchronization problem.
 
 This library solves it:
 
@@ -13,6 +13,8 @@ This library solves it:
 - **Collaborative cursor sync**: Broadcasts cursor positions from either editor to Yjs awareness, so remote participants see a unified cursor regardless of which editor is active.
 
 You provide the `serialize` and `parse` functions. Any text serialization format works — Markdown (via Unified/remark, markdown-it, etc.), AsciiDoc, reStructuredText, or plain text.
+
+Typical use cases include a split-view editor where WYSIWYG and source text sit side by side, or a collaborative setup where one client edits in WYSIWYG and another edits in source text, sharing the same document in real time via Yjs.
 
 ## Packages
 
@@ -232,7 +234,7 @@ Live demo: https://munenick.github.io/prosemirror-codemirror-sync/
 | Page | Description |
 |---|---|
 | [Split editor](https://munenick.github.io/prosemirror-codemirror-sync/) | ProseMirror + CodeMirror side-by-side using `@pm-cm/core` |
-| [Yjs collab](https://munenick.github.io/prosemirror-codemirror-sync/yjs) | Two simulated collaborative clients using `@pm-cm/yjs` |
+| [Yjs collab](https://munenick.github.io/prosemirror-codemirror-sync/yjs.html) | Two simulated collaborative clients using `@pm-cm/yjs` |
 
 To run locally:
 
