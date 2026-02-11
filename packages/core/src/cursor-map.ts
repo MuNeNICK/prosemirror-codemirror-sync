@@ -1,5 +1,5 @@
 import type { Node } from 'prosemirror-model'
-import type { Serialize } from './types.js'
+import type { CursorMapWriter, Matcher, MatchResult, Serialize, SerializeWithMap } from './types.js'
 
 /** A mapping between a ProseMirror position range and a serialized-text offset range. */
 export type TextSegment = {
@@ -20,102 +20,174 @@ export type CursorMap = {
   skippedNodes: number
 }
 
-/** Structural context passed to {@link LocateText} for disambiguation. */
-export type LocateTextContext = {
-  /** ProseMirror position of this text node. */
-  pmStart: number
-  /** Child-index path from doc root to this text node's parent. */
-  pmPath: readonly number[]
-  /** Parent node type name, or `null` for doc-level text. */
-  parentType: string | null
-  /** Index of this text node among its parent's children. */
-  indexInParent: number
-  /** Text content of the previous sibling, or `null`. */
-  prevSiblingText: string | null
-  /** Text content of the next sibling, or `null`. */
-  nextSiblingText: string | null
-  /** 0-based ordinal of this text node in document walk order. */
-  textNodeOrdinal: number
-}
-
 /**
- * Locate a text-node string within the serialized output.
- * Return the starting index, or -1 if not found.
- * Default: `(serialized, nodeText, from) => serialized.indexOf(nodeText, from)`
+ * Create a {@link CursorMapWriter} that tracks offsets and builds segments.
  *
- * An optional {@link LocateTextContext} is provided for disambiguation
- * when the same text appears multiple times in the serialized output.
+ * Call `getText()` to retrieve the full serialized text.
+ * Call `finish(doc)` to produce the final {@link CursorMap}.
  */
-export type LocateText = (serialized: string, nodeText: string, searchFrom: number, context?: LocateTextContext) => number
+export function createCursorMapWriter(): CursorMapWriter & {
+  getText(): string
+  finish(doc: Node): CursorMap
+  getMappedCount(): number
+} {
+  let offset = 0
+  const parts: string[] = []
+  const segments: TextSegment[] = []
+  let mappedCount = 0
 
-const defaultLocate: LocateText = (serialized, nodeText, from) =>
-  serialized.indexOf(nodeText, from)
+  const writer: CursorMapWriter & { getText(): string; finish(doc: Node): CursorMap; getMappedCount(): number } = {
+    write(text: string): void {
+      parts.push(text)
+      offset += text.length
+    },
+
+    writeMapped(pmStart: number, pmEnd: number, text: string): void {
+      segments.push({
+        pmStart,
+        pmEnd,
+        textStart: offset,
+        textEnd: offset + text.length,
+      })
+      parts.push(text)
+      offset += text.length
+      mappedCount++
+    },
+
+    getText(): string {
+      return parts.join('')
+    },
+
+    getMappedCount(): number {
+      return mappedCount
+    },
+
+    finish(doc: Node): CursorMap {
+      const textNodes: { start: number; end: number }[] = []
+      function collectTextNodes(node: Node, contentStart: number): void {
+        node.forEach((child, childOffset) => {
+          const childPos = contentStart + childOffset
+          if (child.isText && child.text) {
+            textNodes.push({ start: childPos, end: childPos + child.text.length })
+          } else if (!child.isLeaf) {
+            collectTextNodes(child, childPos + 1)
+          }
+        })
+      }
+      collectTextNodes(doc, 0)
+
+      // Count PM text nodes with at least one overlapping mapped segment.
+      let mappedNodes = 0
+      let segIdx = 0
+      for (const n of textNodes) {
+        while (segIdx < segments.length && segments[segIdx].pmEnd <= n.start) segIdx++
+        let k = segIdx
+        while (k < segments.length && segments[k].pmStart < n.end) {
+          const s = segments[k]
+          if (s.pmEnd > n.start && s.pmStart < n.end) {
+            mappedNodes++
+            break
+          }
+          k++
+        }
+      }
+
+      return {
+        segments,
+        textLength: offset,
+        skippedNodes: Math.max(0, textNodes.length - mappedNodes),
+      }
+    },
+  }
+
+  return writer
+}
 
 /**
  * Build a cursor map that aligns ProseMirror positions with serialized-text offsets.
  *
- * Walks the document tree and locates each text node within the serialized output,
- * producing a sorted list of {@link TextSegment}s.
+ * Accepts either a plain {@link Serialize} `(doc) => string` or a
+ * {@link SerializeWithMap} `(doc, writer) => void`. Detection is automatic:
+ * if the serializer uses the writer, the exact-by-construction path is used;
+ * if it returns a string, an internal `indexOf`-based forward match is applied.
+ *
+ * The plain `Serialize` path uses exact `indexOf` matching (format-agnostic).
+ * For better mapping quality with serializers that transform text (escaping,
+ * entity encoding, etc.), use {@link wrapSerialize} with a format-specific
+ * {@link Matcher}, or implement {@link SerializeWithMap} directly.
  *
  * @param doc - The ProseMirror document to map.
- * @param serialize - Serializer used to produce the full text.
- * @param locate - Optional custom text-location function. Defaults to `indexOf`.
+ * @param serialize - A plain serializer or a writer-based serializer.
  */
 export function buildCursorMap(
   doc: Node,
-  serialize: Serialize,
-  locate: LocateText = defaultLocate,
+  serialize: Serialize | SerializeWithMap,
 ): CursorMap {
-  const fullText = serialize(doc)
+  const writer = createCursorMapWriter()
+  const result = (serialize as (...args: unknown[]) => unknown)(doc, writer)
+
+  // Plain Serialize: writer was not used, return value is the serialized string.
+  if (typeof result === 'string' && writer.getMappedCount() === 0) {
+    return forwardScanBuildMap(doc, result)
+  }
+
+  // SerializeWithMap: writer was used — exact-by-construction path.
+  const map = writer.finish(doc)
+
+  // Monotonicity validation for writer-produced segments (dev only).
+  if (process.env.NODE_ENV !== 'production') {
+    for (let i = 1; i < map.segments.length; i++) {
+      const prev = map.segments[i - 1]
+      const curr = map.segments[i]
+      if (curr.pmStart < prev.pmEnd || curr.textStart < prev.textEnd) {
+        console.warn(
+          `[pm-cm] buildCursorMap: non-monotonic segment at index ${i} ` +
+          `(pmStart ${curr.pmStart} < prev pmEnd ${prev.pmEnd} or ` +
+          `textStart ${curr.textStart} < prev textEnd ${prev.textEnd}). ` +
+          'Ensure writeMapped calls are in ascending PM document order.',
+        )
+      }
+    }
+  }
+
+  return map
+}
+
+/**
+ * Build a cursor map using plain `indexOf` forward matching.
+ * Format-agnostic: no character or escape assumptions.
+ */
+function forwardScanBuildMap(doc: Node, text: string): CursorMap {
   const segments: TextSegment[] = []
   let searchFrom = 0
+  let totalTextNodes = 0
   let skippedNodes = 0
-  let textNodeOrdinal = 0
 
-  function walkChildren(node: Node, contentStart: number, path: readonly number[]): void {
-    node.forEach((child, offset, index) => {
-      const childPos = contentStart + offset
-
+  function visit(node: Node, contentStart: number): void {
+    node.forEach((child, childOffset) => {
+      const childPos = contentStart + childOffset
       if (child.isText && child.text) {
-        const text = child.text
-        const context: LocateTextContext = {
-          pmStart: childPos,
-          pmPath: path,
-          parentType: node.type.name === 'doc' ? null : node.type.name,
-          indexInParent: index,
-          prevSiblingText: index > 0 ? (node.child(index - 1).textContent || null) : null,
-          nextSiblingText: index < node.childCount - 1 ? (node.child(index + 1).textContent || null) : null,
-          textNodeOrdinal,
-        }
-        textNodeOrdinal++
-        const idx = locate(fullText, text, searchFrom, context)
+        totalTextNodes++
+        const idx = text.indexOf(child.text, searchFrom)
         if (idx >= 0) {
           segments.push({
             pmStart: childPos,
-            pmEnd: childPos + text.length,
+            pmEnd: childPos + child.text.length,
             textStart: idx,
-            textEnd: idx + text.length,
+            textEnd: idx + child.text.length,
           })
-          searchFrom = idx + text.length
+          searchFrom = idx + child.text.length
         } else {
           skippedNodes++
         }
-        return
+      } else if (!child.isLeaf) {
+        visit(child, childPos + 1)
       }
-
-      if (child.isLeaf) {
-        return
-      }
-
-      // Container node: content starts at childPos + 1 (open tag)
-      walkChildren(child, childPos + 1, [...path, index])
     })
   }
 
-  // doc's content starts at position 0
-  walkChildren(doc, 0, [])
-
-  return { segments, textLength: fullText.length, skippedNodes }
+  visit(doc, 0)
+  return { segments, textLength: text.length, skippedNodes }
 }
 
 /**
@@ -193,4 +265,94 @@ export function reverseCursorMapLookup(map: CursorMap, cmOffset: number): number
   const distBefore = cmOffset - before.textEnd
   const distAfter = after.textStart - cmOffset
   return distBefore <= distAfter ? before.pmEnd : after.pmStart
+}
+
+/**
+ * Wrap a plain {@link Serialize} function as a {@link SerializeWithMap}.
+ *
+ * When called without a `matcher`, the wrapper uses `indexOf` internally
+ * (identical to the default `buildCursorMap` path — useful only for type
+ * compatibility).
+ *
+ * When called with a format-specific {@link Matcher}, the wrapper uses
+ * `indexOf` first for each text node, falling back to the matcher when
+ * `indexOf` fails. This enables multi-run mapping for serializers that
+ * transform text (escaping, entity encoding, etc.).
+ *
+ * @param serialize - A plain `(doc: Node) => string` serializer.
+ * @param matcher - Optional format-specific matcher for improved mapping.
+ * @returns A {@link SerializeWithMap} that can be passed to {@link buildCursorMap}.
+ */
+export function wrapSerialize(serialize: Serialize, matcher?: Matcher): SerializeWithMap {
+  return (doc: Node, writer: CursorMapWriter): void => {
+    const text = serialize(doc)
+    const segments = collectMatchedSegments(doc, text, matcher)
+
+    // Emit in text order: unmapped gaps then mapped text
+    let pos = 0
+    for (const seg of segments) {
+      if (seg.textStart > pos) writer.write(text.slice(pos, seg.textStart))
+      writer.writeMapped(seg.pmStart, seg.pmEnd, text.slice(seg.textStart, seg.textEnd))
+      pos = seg.textEnd
+    }
+    if (pos < text.length) writer.write(text.slice(pos))
+  }
+}
+
+/**
+ * Collect matched segments for all PM text nodes using indexOf + optional matcher fallback.
+ */
+function collectMatchedSegments(
+  doc: Node,
+  text: string,
+  matcher: Matcher | undefined,
+): TextSegment[] {
+  const segments: TextSegment[] = []
+  let searchFrom = 0
+
+  function visit(node: Node, contentStart: number): void {
+    node.forEach((child, childOffset) => {
+      const childPos = contentStart + childOffset
+      if (child.isText && child.text) {
+        const content = child.text
+
+        // 1. Try exact indexOf first (strongest signal, no false positives)
+        const exactIdx = text.indexOf(content, searchFrom)
+        if (exactIdx >= 0) {
+          segments.push({
+            pmStart: childPos,
+            pmEnd: childPos + content.length,
+            textStart: exactIdx,
+            textEnd: exactIdx + content.length,
+          })
+          searchFrom = exactIdx + content.length
+          return
+        }
+
+        // 2. If matcher provided, try format-specific matching
+        if (matcher) {
+          const result = matcher(text, content, searchFrom)
+          if (result) {
+            for (const run of result.runs) {
+              segments.push({
+                pmStart: childPos + run.contentStart,
+                pmEnd: childPos + run.contentEnd,
+                textStart: run.textStart,
+                textEnd: run.textEnd,
+              })
+            }
+            searchFrom = result.nextSearchFrom
+            return
+          }
+        }
+
+        // 3. Both failed — node skipped (searchFrom not advanced)
+      } else if (!child.isLeaf) {
+        visit(child, childPos + 1)
+      }
+    })
+  }
+
+  visit(doc, 0)
+  return segments
 }

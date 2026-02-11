@@ -2,7 +2,7 @@ import type { Node, Schema } from 'prosemirror-model'
 import type { EditorState, Plugin } from 'prosemirror-state'
 import type { DecorationAttrs } from 'prosemirror-view'
 import type { Awareness } from 'y-protocols/awareness'
-import type { Serialize, LocateText } from '@pm-cm/core'
+import type { Serialize, SerializeWithMap } from '@pm-cm/core'
 import { initProseMirrorDoc, yCursorPlugin, ySyncPlugin, yUndoPlugin } from 'y-prosemirror'
 import type { AbstractType, Text as YText, UndoManager } from 'yjs'
 import type { XmlFragment as YXmlFragment } from 'yjs'
@@ -35,10 +35,9 @@ export type CollabPluginsOptions = {
   sharedProseMirror: YXmlFragment
   awareness: Awareness
   cursorFieldName?: string
-  serialize?: Serialize
+  serialize?: Serialize | SerializeWithMap
   /** Awareness field used for CM/Y.Text cursor payloads. Default `'cursor'`. */
   cmCursorFieldName?: string
-  locate?: LocateText
   /**
    * Enable PM↔CM cursor sync. Default `false`.
    *
@@ -107,7 +106,6 @@ export function createCollabPlugins(
         serialize: options.serialize,
         cursorFieldName,
         cmCursorFieldName: options.cmCursorFieldName,
-        locate: options.locate,
         sharedText: options.sharedText,
         onWarning: options.onWarning,
       }),

@@ -64,3 +64,50 @@ export type IncrementalParse = (args: {
   diff: TextDiff
   schema: Schema
 }) => IncrementalParseResult | null
+
+/** Writer that tracks text offsets for cursor mapping. */
+export type CursorMapWriter = {
+  /** Write unmapped text (e.g. syntax like `> `, `**`, `[`, `](url)`). */
+  write(text: string): void
+  /**
+   * Write mapped text: content from a PM text node at `[pmStart, pmEnd)`.
+   * Must be called in PM document order (ascending `pmStart`).
+   */
+  writeMapped(pmStart: number, pmEnd: number, text: string): void
+}
+
+/** Serializer that writes to a {@link CursorMapWriter} for exact cursor mapping. */
+export type SerializeWithMap = (doc: Node, writer: CursorMapWriter) => void
+
+/** A single contiguous run within a match result. */
+export type MatchRun = {
+  /** Start offset within the PM text node content (0-based). */
+  contentStart: number
+  /** End offset within the PM text node content (exclusive). */
+  contentEnd: number
+  /** Start offset in the serialized text. */
+  textStart: number
+  /** End offset in the serialized text (exclusive). */
+  textEnd: number
+}
+
+/** Result of a successful match from a {@link Matcher}. */
+export type MatchResult = {
+  /** Contiguous runs mapping PM content to serialized text. */
+  runs: MatchRun[]
+  /** Position from which the next node's search should start. */
+  nextSearchFrom: number
+}
+
+/**
+ * Format-specific matching function for use with {@link wrapSerialize}.
+ *
+ * Given a PM text node's content, the full serialized text, and a search-from
+ * position, return a {@link MatchResult} describing how the content maps to
+ * the serialized text, or `null` if no match is found.
+ */
+export type Matcher = (
+  serialized: string,
+  nodeText: string,
+  searchFrom: number,
+) => MatchResult | null

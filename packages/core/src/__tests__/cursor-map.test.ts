@@ -48,9 +48,10 @@ describe('buildCursorMap', () => {
     expect(map.segments[1]).toEqual({ pmStart: 5, pmEnd: 7, textStart: 3, textEnd: 5 })
   })
 
-  it('counts skippedNodes when locate returns -1', () => {
+  it('counts skippedNodes when text is not found', () => {
+    // Serializer returns text that doesn't contain the node content
     const doc = makeDoc('hello')
-    const map = buildCursorMap(doc, serialize, () => -1)
+    const map = buildCursorMap(doc, () => 'XXXXX')
     expect(map.segments.length).toBe(0)
     expect(map.skippedNodes).toBe(1)
   })

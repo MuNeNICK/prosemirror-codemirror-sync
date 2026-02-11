@@ -5,7 +5,7 @@ import type { Awareness } from 'y-protocols/awareness'
 import { absolutePositionToRelativePosition, ySyncPluginKey } from 'y-prosemirror'
 import { createRelativePositionFromTypeIndex } from 'yjs'
 import type { Text as YText, XmlFragment as YXmlFragment } from 'yjs'
-import type { Serialize, LocateText, CursorMap } from '@pm-cm/core'
+import type { Serialize, SerializeWithMap, CursorMap } from '@pm-cm/core'
 import { buildCursorMap, cursorMapLookup, reverseCursorMapLookup } from '@pm-cm/core'
 import type { OnWarning } from './types.js'
 
@@ -92,11 +92,10 @@ const defaultOnWarning: OnWarning = (event) => console.warn(`[pm-cm] ${event.cod
 /** Options for {@link createCursorSyncPlugin}. */
 export type CursorSyncPluginOptions = {
   awareness: Awareness
-  serialize: Serialize
+  serialize: Serialize | SerializeWithMap
   cursorFieldName?: string
   /** Awareness field used for CM/Y.Text cursor payloads. Default `'cursor'`. */
   cmCursorFieldName?: string
-  locate?: LocateText
   /**
    * When provided, the plugin also broadcasts CM-format cursor positions
    * (Y.Text relative positions) to the awareness field specified by
@@ -114,7 +113,7 @@ export type CursorSyncPluginOptions = {
  * - CM → awareness: triggered by dispatching {@link syncCmCursor}.
  */
 export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin {
-  const { awareness, serialize, locate, sharedText } = options
+  const { awareness, serialize, sharedText } = options
   const warn = options.onWarning ?? defaultOnWarning
   const cursorFieldName = options.cursorFieldName ?? 'pmCursor'
   const cmCursorFieldName = options.cmCursorFieldName ?? 'cursor'
@@ -127,7 +126,7 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
 
   function getOrBuildMap(doc: Node): CursorMap {
     if (cachedMapDoc !== doc || !cachedMap) {
-      cachedMap = buildCursorMap(doc, serialize, locate)
+      cachedMap = buildCursorMap(doc, serialize)
       cachedMapDoc = doc
     }
     return cachedMap

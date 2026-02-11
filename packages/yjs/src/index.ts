@@ -19,7 +19,7 @@ export type {
 
 // Cursor mapping re-exported from @pm-cm/core
 export { buildCursorMap, cursorMapLookup, reverseCursorMapLookup } from '@pm-cm/core'
-export type { TextSegment, CursorMap, LocateText } from '@pm-cm/core'
+export type { TextSegment, CursorMap, SerializeWithMap, CursorMapWriter, Matcher, MatchResult, MatchRun } from '@pm-cm/core'
 
 // Bridge sync plugin (auto PM→Y.Text wiring)
 export { createBridgeSyncPlugin, bridgeSyncPluginKey } from './bridge-sync-plugin.js'
@@ -30,4 +30,5 @@ export { createCursorSyncPlugin, cursorSyncPluginKey, syncCmCursor } from './cur
 export type { CursorSyncState, CursorSyncPluginOptions } from './cursor-sync-plugin.js'
 
 // Re-export types from @pm-cm/core
+export { createCursorMapWriter, wrapSerialize } from '@pm-cm/core'
 export type { Serialize, Parse, Normalize, OnError, ErrorCode, ErrorEvent } from '@pm-cm/core'
