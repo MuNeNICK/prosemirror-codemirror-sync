@@ -3,7 +3,7 @@ import { Node, Schema } from 'prosemirror-model'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { createViewBridge, diffText } from '../bridge.js'
-import type { IncrementalParseResult } from '../types.js'
+import type { IncrementalParse, IncrementalParseResult } from '../types.js'
 
 const schema = new Schema({
   nodes: {
@@ -168,7 +168,7 @@ describe('bridge: parse LRU cache', () => {
 
 describe('bridge: incremental parse', () => {
   it('should call incrementalParse with correct diff when provided', () => {
-    const incrementalParseSpy = vi.fn(() => null) // always fallback
+    const incrementalParseSpy = vi.fn<IncrementalParse>(() => null) // always fallback
 
     const serialize = (doc: Node) => {
       const lines: string[] = []

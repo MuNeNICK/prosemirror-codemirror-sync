@@ -1,5 +1,5 @@
 import type { Node } from 'prosemirror-model'
-import type { CursorMapWriter, Matcher, MatchResult, Serialize, SerializeWithMap } from './types.js'
+import type { CursorMapWriter, Matcher, Serialize, SerializeWithMap } from './types.js'
 
 /** A mapping between a ProseMirror position range and a serialized-text offset range. */
 export type TextSegment = {
@@ -134,19 +134,17 @@ export function buildCursorMap(
   // SerializeWithMap: writer was used — exact-by-construction path.
   const map = writer.finish(doc)
 
-  // Monotonicity validation for writer-produced segments (dev only).
-  if (process.env.NODE_ENV !== 'production') {
-    for (let i = 1; i < map.segments.length; i++) {
-      const prev = map.segments[i - 1]
-      const curr = map.segments[i]
-      if (curr.pmStart < prev.pmEnd || curr.textStart < prev.textEnd) {
-        console.warn(
-          `[pm-cm] buildCursorMap: non-monotonic segment at index ${i} ` +
-          `(pmStart ${curr.pmStart} < prev pmEnd ${prev.pmEnd} or ` +
-          `textStart ${curr.textStart} < prev textEnd ${prev.textEnd}). ` +
-          'Ensure writeMapped calls are in ascending PM document order.',
-        )
-      }
+  // Monotonicity validation for writer-produced segments.
+  for (let i = 1; i < map.segments.length; i++) {
+    const prev = map.segments[i - 1]
+    const curr = map.segments[i]
+    if (curr.pmStart < prev.pmEnd || curr.textStart < prev.textEnd) {
+      console.warn(
+        `[pm-cm] buildCursorMap: non-monotonic segment at index ${i} ` +
+        `(pmStart ${curr.pmStart} < prev pmEnd ${prev.pmEnd} or ` +
+        `textStart ${curr.textStart} < prev textEnd ${prev.textEnd}). ` +
+        'Ensure writeMapped calls are in ascending PM document order.',
+      )
     }
   }
 
