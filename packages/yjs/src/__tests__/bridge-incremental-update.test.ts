@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { Node, Schema } from 'prosemirror-model'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
+import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror'
 import {
   Doc,
   Text as YText,
@@ -12,7 +13,7 @@ import {
 } from 'yjs'
 import { Awareness } from 'y-protocols/awareness'
 
-import { createYjsBridge } from '../bridge.js'
+import { createYjsBridge, replaceSharedProseMirror } from '../bridge.js'
 import { createCollabPlugins } from '../collab-plugins.js'
 
 const schema = new Schema({
@@ -20,6 +21,25 @@ const schema = new Schema({
     doc: { content: 'paragraph+' },
     paragraph: { content: 'text*', toDOM: () => ['p', 0] as const },
     text: { inline: true },
+  },
+})
+
+const richSchema = new Schema({
+  nodes: {
+    doc: { content: 'block+' },
+    paragraph: { group: 'block', content: 'inline*', toDOM: () => ['p', 0] as const },
+    heading: {
+      group: 'block',
+      attrs: { level: { default: 1 } },
+      content: 'inline*',
+      toDOM: (node) => [`h${node.attrs.level}`, 0] as const,
+    },
+    bullet_list: { group: 'block', content: 'list_item+', toDOM: () => ['ul', 0] as const },
+    list_item: { content: 'paragraph+', toDOM: () => ['li', 0] as const },
+    text: { inline: true, group: 'inline' },
+  },
+  marks: {
+    strong: {},
   },
 })
 
@@ -34,6 +54,29 @@ function parse(text: string) {
     schema.node('paragraph', null, line ? [schema.text(line)] : []),
   )
   return schema.node('doc', null, paragraphs)
+}
+
+function parseRich(text: string) {
+  const [kind, raw] = text.split(':', 2)
+  const content = raw ?? ''
+  if (kind === 'plain') {
+    return richSchema.node('doc', null, [richSchema.node('paragraph', null, content ? [richSchema.text(content)] : [])])
+  }
+  if (kind === 'strong') {
+    const strong = richSchema.mark('strong')
+    return richSchema.node('doc', null, [richSchema.node('paragraph', null, content ? [richSchema.text(content, [strong])] : [])])
+  }
+  if (kind === 'h1' || kind === 'h2') {
+    return richSchema.node('doc', null, [richSchema.node('heading', { level: kind === 'h1' ? 1 : 2 }, content ? [richSchema.text(content)] : [])])
+  }
+  if (kind === 'list') {
+    return richSchema.node('doc', null, [
+      richSchema.node('bullet_list', null, [
+        richSchema.node('list_item', null, [richSchema.node('paragraph', null, content ? [richSchema.text(content)] : [])]),
+      ]),
+    ])
+  }
+  throw new Error(`unsupported rich parse input: ${text}`)
 }
 
 type Harness = {
@@ -189,5 +232,43 @@ describe('yjs bridge: incremental XmlFragment update', () => {
 
     // XmlElement identity should be preserved
     expect(fragment.get(0)).toBe(firstParagraph)
+  })
+})
+
+describe('incremental update correctness: mark/attr/structure changes', () => {
+  it('applies mark-only change even when text content is unchanged', () => {
+    const ydoc = new Doc()
+    const fragment = ydoc.getXmlFragment('pm')
+
+    expect(replaceSharedProseMirror(ydoc, fragment, 'plain:hello', 'test', { schema: richSchema, parse: parseRich })).toEqual({ ok: true })
+    expect(replaceSharedProseMirror(ydoc, fragment, 'strong:hello', 'test', { schema: richSchema, parse: parseRich })).toEqual({ ok: true })
+
+    const actual = yXmlFragmentToProseMirrorRootNode(fragment, richSchema)
+    const expected = parseRich('strong:hello')
+    expect(actual.eq(expected)).toBe(true)
+  })
+
+  it('applies attribute-only change even when text content is unchanged', () => {
+    const ydoc = new Doc()
+    const fragment = ydoc.getXmlFragment('pm')
+
+    expect(replaceSharedProseMirror(ydoc, fragment, 'h1:Title', 'test', { schema: richSchema, parse: parseRich })).toEqual({ ok: true })
+    expect(replaceSharedProseMirror(ydoc, fragment, 'h2:Title', 'test', { schema: richSchema, parse: parseRich })).toEqual({ ok: true })
+
+    const actual = yXmlFragmentToProseMirrorRootNode(fragment, richSchema)
+    const expected = parseRich('h2:Title')
+    expect(actual.eq(expected)).toBe(true)
+  })
+
+  it('applies structural change even when text content is unchanged', () => {
+    const ydoc = new Doc()
+    const fragment = ydoc.getXmlFragment('pm')
+
+    expect(replaceSharedProseMirror(ydoc, fragment, 'plain:item', 'test', { schema: richSchema, parse: parseRich })).toEqual({ ok: true })
+    expect(replaceSharedProseMirror(ydoc, fragment, 'list:item', 'test', { schema: richSchema, parse: parseRich })).toEqual({ ok: true })
+
+    const actual = yXmlFragmentToProseMirrorRootNode(fragment, richSchema)
+    const expected = parseRich('list:item')
+    expect(actual.eq(expected)).toBe(true)
   })
 })
