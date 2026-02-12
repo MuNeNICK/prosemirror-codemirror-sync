@@ -38,6 +38,15 @@ export function createBridgeSyncPlugin(
   }
   wiredBridges.add(bridge)
 
+  // Tracks whether any Yjs-originated docChange was seen in the current
+  // dispatch batch. Reset in view.update after each cycle.
+  // appendTransaction plugins (e.g. prosemirror-tables) may emit follow-up
+  // transactions that lack ySyncPlugin meta — this flag prevents those
+  // from triggering a spurious text→PM→text round-trip.
+  let yjsBatchSeen = false
+  // Closure flag consumed in view.update — avoids sticky plugin state across dispatches.
+  let needsSync = false
+
   return new Plugin<BridgeSyncState>({
     key: bridgeSyncPluginKey,
 
@@ -45,9 +54,18 @@ export function createBridgeSyncPlugin(
       init(): BridgeSyncState {
         return { needsSync: false }
       },
-      apply(tr, _prev): BridgeSyncState {
-        if (!tr.docChanged) return { needsSync: false }
-        if (bridge.isYjsSyncChange(tr)) return { needsSync: false }
+      apply(tr, prev): BridgeSyncState {
+        if (!tr.docChanged) return prev
+        if (bridge.isYjsSyncChange(tr)) {
+          yjsBatchSeen = true
+          needsSync = false
+          return { needsSync: false }
+        }
+        if (yjsBatchSeen) {
+          needsSync = false
+          return { needsSync: false }
+        }
+        needsSync = true
         return { needsSync: true }
       },
     },
@@ -55,8 +73,7 @@ export function createBridgeSyncPlugin(
     view() {
       return {
         update(view) {
-          const state = bridgeSyncPluginKey.getState(view.state)
-          if (state?.needsSync) {
+          if (needsSync) {
             const result = bridge.syncToSharedText(view.state.doc)
             if (!result.ok) {
               if (result.reason === 'detached') {
@@ -65,6 +82,8 @@ export function createBridgeSyncPlugin(
               }
             }
           }
+          needsSync = false
+          yjsBatchSeen = false
         },
         destroy() {
           wiredBridges.delete(bridge)

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { Schema } from 'prosemirror-model'
-import { EditorState, TextSelection } from 'prosemirror-state'
+import { EditorState, Plugin, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { createBridgeSyncPlugin, bridgeSyncPluginKey } from '../bridge-sync-plugin.js'
 import type { YjsBridgeHandle } from '../types.js'
@@ -23,10 +23,10 @@ function makeMockBridge(overrides?: Partial<YjsBridgeHandle>): YjsBridgeHandle {
   }
 }
 
-function createView(bridge: YjsBridgeHandle, options?: Parameters<typeof createBridgeSyncPlugin>[1]): EditorView {
+function createView(bridge: YjsBridgeHandle, options?: Parameters<typeof createBridgeSyncPlugin>[1], extraPlugins?: Plugin[]): EditorView {
   const plugin = createBridgeSyncPlugin(bridge, options)
   const doc = schema.node('doc', null, [schema.node('paragraph', null, [schema.text('hello')])])
-  const state = EditorState.create({ schema, doc, plugins: [plugin] })
+  const state = EditorState.create({ schema, doc, plugins: [plugin, ...(extraPlugins ?? [])] })
   return new EditorView(document.createElement('div'), { state })
 }
 
@@ -138,5 +138,86 @@ describe('createBridgeSyncPlugin', () => {
     view.dispatch(tr)
 
     expect(bridge.syncToSharedText).not.toHaveBeenCalled()
+  })
+
+  it('suppresses sync when appendTransaction follows a yjs-originated change', () => {
+    // Simulate: yjs sync change is the initial tr, then an appendTransaction
+    // plugin (like prosemirror-tables) emits a follow-up docChanged tr without
+    // ySyncPlugin meta.
+    let callCount = 0
+    const bridge = makeMockBridge({
+      isYjsSyncChange: vi.fn(() => {
+        callCount++
+        // First call (the dispatched tr) is yjs-originated;
+        // second call (appended tr) is not.
+        return callCount === 1
+      }),
+    })
+
+    // Plugin that appends a doc-changing transaction after the initial one
+    const appendPlugin = new Plugin({
+      appendTransaction(_trs, _oldState, newState) {
+        // Only append once: if text is still 'hello', insert '!'
+        const text = newState.doc.textContent
+        if (!text.includes('!')) {
+          return newState.tr.insertText('!', newState.doc.content.size - 1)
+        }
+        return null
+      },
+    })
+
+    const view = tracked(createView(bridge, { onWarning: vi.fn() }, [appendPlugin]))
+
+    // Dispatch a doc-changing tr that isYjsSyncChange returns true for
+    const tr = view.state.tr.insertText(' world', 6)
+    view.dispatch(tr)
+
+    // The appended transaction should NOT trigger sync
+    expect(bridge.syncToSharedText).not.toHaveBeenCalled()
+  })
+
+  it('preserves needsSync through a selection-only transaction in the same batch', () => {
+    const bridge = makeMockBridge()
+
+    // Plugin that appends a selection-only transaction after a doc change
+    const appendPlugin = new Plugin({
+      appendTransaction(trs, _oldState, newState) {
+        if (trs.some((t) => t.docChanged)) {
+          // Move selection to start (selection-only, no doc change)
+          return newState.tr.setSelection(TextSelection.near(newState.doc.resolve(1)))
+        }
+        return null
+      },
+    })
+
+    const view = tracked(createView(bridge, { onWarning: vi.fn() }, [appendPlugin]))
+
+    const tr = view.state.tr.insertText(' world', 6)
+    view.dispatch(tr)
+
+    // Should still sync despite the appended selection-only transaction
+    expect(bridge.syncToSharedText).toHaveBeenCalledOnce()
+  })
+
+  it('resets yjsBatchSeen between separate dispatches', () => {
+    let callCount = 0
+    const bridge = makeMockBridge({
+      isYjsSyncChange: vi.fn(() => {
+        callCount++
+        // First dispatch: yjs-originated
+        // Second dispatch: local
+        return callCount === 1
+      }),
+    })
+
+    const view = tracked(createView(bridge, { onWarning: vi.fn() }))
+
+    // First dispatch: yjs-originated → no sync
+    view.dispatch(view.state.tr.insertText(' yjs', 6))
+    expect(bridge.syncToSharedText).not.toHaveBeenCalled()
+
+    // Second dispatch: local → should sync
+    view.dispatch(view.state.tr.insertText(' local', view.state.doc.content.size - 1))
+    expect(bridge.syncToSharedText).toHaveBeenCalledOnce()
   })
 })
