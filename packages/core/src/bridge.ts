@@ -25,7 +25,10 @@ export function diffText(a: string, b: string): TextDiff {
 /** Simple LRU cache for parse results. */
 class ParseLru {
   private map = new Map<string, Node>()
-  constructor(private limit: number) {}
+  private limit: number
+  constructor(limit: number) {
+    this.limit = limit
+  }
   get(key: string): Node | undefined {
     const v = this.map.get(key)
     if (v !== undefined) {
