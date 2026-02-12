@@ -89,7 +89,7 @@ export function createCollabPlugins(
 
   const plugins: Plugin[] = [
     ySyncPlugin(sharedProseMirror, { mapping: rawMapping }),
-    yCursorPlugin(pmAwareness, options.yCursorPluginOpts ?? {}, cursorFieldName),
+    yCursorPlugin(pmAwareness, options.yCursorPluginOpts ?? {}),
     yUndoPlugin(options.yUndoPluginOpts),
   ]
 

@@ -1,11 +1,20 @@
 import type { Awareness } from 'y-protocols/awareness'
 
 /**
- * Create a Proxy around a Yjs {@link Awareness} that suppresses the specified
- * cursor field. This prevents y-prosemirror's built-in cursor management from
- * conflicting with the PM↔CM cursor sync plugin.
+ * Create a Proxy around a Yjs {@link Awareness} that adapts the cursor sync
+ * plugin's awareness field for y-prosemirror's `yCursorPlugin`.
  *
- * Other `setLocalStateField` calls are passed through unchanged.
+ * y-prosemirror (npm 1.3.7) hardcodes `"cursor"` in `createDecorations`,
+ * but the cursor sync plugin writes to a separate field (default `"pmCursor"`)
+ * to avoid conflicts with y-codemirror.next's `"cursor"` (Y.Text-based).
+ *
+ * This proxy:
+ * - **`getStates()`**: remaps `cursorField` → `"cursor"` so yCursorPlugin
+ *   finds the PM cursor data under the hardcoded `"cursor"` key.
+ * - **`getLocalState()`**: returns `cursor: null` so yCursorPlugin's
+ *   `updateCursorInfo` never tries to broadcast its own cursor.
+ * - **`setLocalStateField("cursor", …)`**: suppressed (no-op) so
+ *   yCursorPlugin cannot overwrite the field managed by the sync plugin.
  */
 export function createAwarenessProxy(awareness: Awareness, cursorField = 'pmCursor'): Awareness {
   return new Proxy(awareness, {
@@ -13,14 +22,29 @@ export function createAwarenessProxy(awareness: Awareness, cursorField = 'pmCurs
       if (prop === 'getLocalState') {
         return () => {
           const state = target.getLocalState()
-          return state ? { ...state, [cursorField]: null } : state
+          // Hide "cursor" so yCursorPlugin's updateCursorInfo sees null
+          return state ? { ...state, cursor: null } : state
         }
       }
       if (prop === 'setLocalStateField') {
         return (field: string, value: unknown) => {
-          // Only suppress the cursor field; pass through other fields
-          if (field === cursorField) return
+          // Block yCursorPlugin's writes to "cursor"
+          if (field === 'cursor') return
           target.setLocalStateField(field, value)
+        }
+      }
+      if (prop === 'getStates') {
+        return () => {
+          const states = target.getStates()
+          // Remap cursorField → "cursor" so yCursorPlugin reads PM cursor data
+          const remapped = new Map<number, Record<string, unknown>>()
+          states.forEach((state, clientId) => {
+            remapped.set(clientId, {
+              ...state as Record<string, unknown>,
+              cursor: (state as Record<string, unknown>)[cursorField] ?? null,
+            })
+          })
+          return remapped
         }
       }
       const value = Reflect.get(target, prop, receiver) as unknown
