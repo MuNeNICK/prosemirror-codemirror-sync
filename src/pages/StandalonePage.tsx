@@ -2,23 +2,47 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { createViewBridge } from '@pm-cm/core'
 import type { EditorView } from 'prosemirror-view'
 import type { Transaction } from 'prosemirror-state'
+import { AppHeader } from '../components/AppHeader'
 import { MarkdownPane } from '../components/MarkdownPane'
 import { WysiwygPane } from '../components/WysiwygPane'
 import { markdownToProseMirrorDoc, normalizeMarkdown, proseMirrorDocToMarkdown } from '../lib/prosemirrorMarkdown'
 import { prosemirrorSchema } from '../lib/prosemirrorSchema'
 
-const INITIAL_MARKDOWN = `# Standalone Demo
+const INITIAL_MARKDOWN = `# Welcome to @pm-cm
 
-**@pm-cm/core** bridge: CM↔PM sync. See also the [Yjs collaborative editing demo](./yjs.html) where two clients share one document in real time.
+A **ProseMirror** and **CodeMirror** bridge that keeps two editors in sync — edit Markdown on the left, see rich text on the right, and vice versa.
 
-Type \`/\` in the WYSIWYG pane to open Notion-like slash commands — insert headings, lists, tables, code blocks, quotes, and more.
+## Try it out
 
-- [ ] Task 1
-- [x] Task 2
+Type \`/\` in the Rich Text pane to open **slash commands** — insert headings, lists, tables, code blocks, and more.
 
-| A | B |
+### Features
+
+- Real-time bidirectional sync between Markdown and Rich Text
+- Format-agnostic cursor mapping via \`buildCursorMap\`
+- Notion-style slash commands and block handles
+
+> This is the **standalone** demo using \`@pm-cm/core\`. Switch to the **Collaborative** tab to see two clients sharing one document via Yjs.
+
+### Task list
+
+- [x] Bidirectional sync
+- [x] Slash commands
+- [ ] Your next feature
+
+| Feature | Status |
 | --- | --- |
-| 1 | 2 |
+| CM \u2194 PM sync | Done |
+| Cursor mapping | Done |
+| Yjs collab | See Collaborative tab |
+
+\`\`\`ts
+import { createViewBridge } from '@pm-cm/core'
+
+const bridge = createViewBridge({
+  schema, serialize, parse, normalize,
+})
+\`\`\`
 `
 
 export function StandalonePage() {
@@ -48,6 +72,7 @@ export function StandalonePage() {
 
   return (
     <div className="app-shell">
+      <AppHeader activePage="standalone" />
       <main className="editor-grid">
         <MarkdownPane value={markdown} onChange={handleCmChange} />
         <WysiwygPane

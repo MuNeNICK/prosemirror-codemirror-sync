@@ -10,19 +10,30 @@ import {
   syncCmCursor,
 } from '@pm-cm/yjs'
 import type { YjsBridgeHandle } from '@pm-cm/yjs'
+import { AppHeader } from '../components/AppHeader'
 import { MarkdownPane } from '../components/MarkdownPane'
 import { WysiwygPane } from '../components/WysiwygPane'
 import { markdownToProseMirrorDoc, normalizeMarkdown, proseMirrorDocToMarkdown } from '../lib/prosemirrorMarkdown'
 import { prosemirrorSchema } from '../lib/prosemirrorSchema'
 
-const INITIAL_MARKDOWN = `# Yjs Demo
+const INITIAL_MARKDOWN = `# Collaborative Editing
 
-**@pm-cm/yjs** bridge: two clients sharing one document.
+Two clients sharing one document in real time via **Yjs** CRDT.
 
-Type \`/\` in the WYSIWYG pane to open Notion-like slash commands — insert headings, lists, tables, code blocks, quotes, and more.
+## How it works
 
-- [ ] Task 1
-- [x] Task 2
+Each client pair below has its own \`Y.Doc\` — updates are synced automatically. Try editing in one client and watch the other update instantly.
+
+- Cursors and selections are shared via **awareness protocol**
+- The \`@pm-cm/yjs\` bridge keeps Markdown and Rich Text in sync on each client
+- Type \`/\` in the Rich Text pane for slash commands
+
+> Edit either client — both stay in sync through Yjs conflict-free replication.
+
+| Client | Doc | Awareness |
+| --- | --- | --- |
+| Client 1 | Y.Doc 1 | Blue cursor |
+| Client 2 | Y.Doc 2 | Green cursor |
 `
 
 const CROSS_SYNC = 'cross-sync'
@@ -34,7 +45,7 @@ type Client = {
   bridge: YjsBridgeHandle
 }
 
-function CollabPair({ client }: { client: Client }) {
+function CollabPair({ client, label }: { client: Client; label: string }) {
   const pmViewRef = useRef<EditorView | null>(null)
   const [cmScrollOffset, setCmScrollOffset] = useState<number | undefined>(undefined)
 
@@ -52,24 +63,27 @@ function CollabPair({ client }: { client: Client }) {
   }, [])
 
   return (
-    <main className="editor-grid">
-      <MarkdownPane
-        sharedMarkdown={client.sharedText}
-        awareness={client.awareness}
-        scrollToOffset={cmScrollOffset}
-        onCursorPositionChange={handleCmCursorChange}
-      />
-      <WysiwygPane
-        initialText=""
-        sharedProseMirror={client.sharedProseMirror}
-        awareness={client.awareness}
-        serialize={proseMirrorDocToMarkdown}
-        sharedText={client.sharedText}
-        bridge={client.bridge}
-        onTransaction={handlePmTransaction}
-        onViewReady={(v) => { pmViewRef.current = v }}
-      />
-    </main>
+    <div className="collab-client">
+      <div className="client-label">{label}</div>
+      <main className="editor-grid">
+        <MarkdownPane
+          sharedMarkdown={client.sharedText}
+          awareness={client.awareness}
+          scrollToOffset={cmScrollOffset}
+          onCursorPositionChange={handleCmCursorChange}
+        />
+        <WysiwygPane
+          initialText=""
+          sharedProseMirror={client.sharedProseMirror}
+          awareness={client.awareness}
+          serialize={proseMirrorDocToMarkdown}
+          sharedText={client.sharedText}
+          bridge={client.bridge}
+          onTransaction={handlePmTransaction}
+          onViewReady={(v) => { pmViewRef.current = v }}
+        />
+      </main>
+    </div>
   )
 }
 
@@ -147,9 +161,12 @@ export function YjsPage() {
   if (!clients) return null
 
   return (
-    <div className="app-shell" style={{ display: 'grid', gridTemplateRows: '1fr 1fr' }}>
-      <CollabPair client={clients[0]} />
-      <CollabPair client={clients[1]} />
+    <div className="app-shell">
+      <AppHeader activePage="yjs" />
+      <div className="collab-clients-grid">
+        <CollabPair client={clients[0]} label="Client 1" />
+        <CollabPair client={clients[1]} label="Client 2" />
+      </div>
     </div>
   )
 }

@@ -1,10 +1,12 @@
 import { markdown as markdownLanguage } from '@codemirror/lang-markdown'
+import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView } from '@codemirror/view'
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
 import { memo, useEffect, useMemo, useRef } from 'react'
 import type { Awareness } from 'y-protocols/awareness'
 import type { Text as YText } from 'yjs'
 import { yCollab } from 'y-codemirror.next'
+import { useTheme } from './ThemeProvider'
 
 type MarkdownPaneProps = {
   scrollToOffset?: number
@@ -24,6 +26,7 @@ export const MarkdownPane = memo(function MarkdownPane({
 }: MarkdownPaneProps) {
   const cmRef = useRef<ReactCodeMirrorRef>(null)
   const onCursorPositionChangeRef = useRef(onCursorPositionChange)
+  const { theme } = useTheme()
 
   useEffect(() => {
     onCursorPositionChangeRef.current = onCursorPositionChange
@@ -40,12 +43,15 @@ export const MarkdownPane = memo(function MarkdownPane({
   )
 
   const extensions = useMemo(() => {
-    const base = [markdownLanguage(), cursorListener]
+    const base = [markdownLanguage(), EditorView.lineWrapping, cursorListener]
+    if (theme === 'dark') {
+      base.push(oneDark)
+    }
     if (sharedMarkdown && awareness) {
       base.push(yCollab(sharedMarkdown, awareness))
     }
     return base
-  }, [sharedMarkdown, awareness, cursorListener])
+  }, [sharedMarkdown, awareness, cursorListener, theme])
 
   useEffect(() => {
     if (scrollToOffset === undefined) return
