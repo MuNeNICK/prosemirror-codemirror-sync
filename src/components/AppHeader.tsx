@@ -13,13 +13,13 @@ export function AppHeader({ activePage }: AppHeaderProps) {
       <span className="app-header__brand">@pm-cm</span>
       <nav className="app-header__nav">
         <a
-          href="/"
+          href={import.meta.env.BASE_URL}
           className={`app-header__link${activePage === 'standalone' ? ' is-active' : ''}`}
         >
           Standalone
         </a>
         <a
-          href="/yjs.html"
+          href={`${import.meta.env.BASE_URL}yjs.html`}
           className={`app-header__link${activePage === 'yjs' ? ' is-active' : ''}`}
         >
           Collaborative
