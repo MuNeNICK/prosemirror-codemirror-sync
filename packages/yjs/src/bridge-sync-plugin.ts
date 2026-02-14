@@ -50,7 +50,7 @@ export function createBridgeSyncPlugin(
       init(): BridgeSyncState {
         return { needsSync: false }
       },
-      apply(tr, prev): BridgeSyncState {
+      apply(tr, _prev): BridgeSyncState {
         if (!tr.docChanged) return { needsSync }
         if (bridge.isYjsSyncChange(tr)) {
           yjsBatchSeen = true
