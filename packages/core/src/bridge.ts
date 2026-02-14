@@ -234,9 +234,18 @@ export function createViewBridge(config: ViewBridgeConfig): ViewBridgeHandle {
         if (!end) {
           return markUnchanged(prevDoc, text, incoming)
         }
-        from = Math.min(start, end.a)
-        to = Math.max(start, end.a)
-        toB = Math.max(start, end.b)
+        // When findDiffStart enters a node deeper than findDiffEnd's boundary,
+        // the positions overlap. Adjust end positions forward to avoid producing
+        // incorrect slices that lose or merge paragraphs.
+        let { a: endA, b: endB } = end
+        const overlap = start - Math.min(endA, endB)
+        if (overlap > 0) {
+          endA += overlap
+          endB += overlap
+        }
+        from = start
+        to = endA
+        toB = endB
       }
 
       const tr = view.state.tr
