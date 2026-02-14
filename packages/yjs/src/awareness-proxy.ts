@@ -36,13 +36,18 @@ export function createAwarenessProxy(awareness: Awareness, cursorField = 'pmCurs
       if (prop === 'getStates') {
         return () => {
           const states = target.getStates()
-          // Remap cursorField → "cursor" so yCursorPlugin reads PM cursor data
+          // Remap cursorField → "cursor" so yCursorPlugin reads PM cursor data.
+          // Only override when the client actually has cursorField — clients
+          // without cursor sync (e.g. using yCursorPlugin directly) keep their
+          // original "cursor" intact.
           const remapped = new Map<number, Record<string, unknown>>()
           states.forEach((state, clientId) => {
-            remapped.set(clientId, {
-              ...state as Record<string, unknown>,
-              cursor: (state as Record<string, unknown>)[cursorField] ?? null,
-            })
+            const s = state as Record<string, unknown>
+            if (cursorField in s) {
+              remapped.set(clientId, { ...s, cursor: s[cursorField] ?? null })
+            } else {
+              remapped.set(clientId, s)
+            }
           })
           return remapped
         }

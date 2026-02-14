@@ -75,7 +75,7 @@ describe('createAwarenessProxy', () => {
     expect(localState?.user).toEqual({ name: 'Alice' })
   })
 
-  it('getStates returns cursor: null when cursorField is absent', () => {
+  it('getStates preserves original cursor when cursorField is absent', () => {
     const awareness = makeAwareness()
     const proxy = createAwarenessProxy(awareness, 'pmCursor')
 
@@ -83,8 +83,22 @@ describe('createAwarenessProxy', () => {
 
     const states = proxy.getStates()
     const localState = states.get(awareness.doc.clientID) as Record<string, unknown>
-    expect(localState?.cursor).toBeNull()
+    // No pmCursor set → original state preserved (cursor is undefined)
+    expect(localState?.cursor).toBeUndefined()
     expect(localState?.user).toEqual({ name: 'Alice' })
+  })
+
+  it('getStates preserves cursor from clients without cursorField', () => {
+    const awareness = makeAwareness()
+    const proxy = createAwarenessProxy(awareness, 'pmCursor')
+
+    // Simulate a CM-only client that has cursor but no pmCursor
+    awareness.setLocalStateField('cursor', { anchor: 10, head: 20 })
+
+    const states = proxy.getStates()
+    const localState = states.get(awareness.doc.clientID) as Record<string, unknown>
+    // cursor is preserved because pmCursor is absent
+    expect(localState?.cursor).toEqual({ anchor: 10, head: 20 })
   })
 
   it('on/off delegates to real awareness', () => {

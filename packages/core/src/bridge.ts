@@ -90,7 +90,7 @@ export type ApplyTextOptions = {
  */
 export type ApplyTextResult =
   | { ok: true }
-  | { ok: false; reason: 'unchanged' | 'parse-error' }
+  | { ok: false; reason: 'unchanged' | 'parse-error' | 'serialize-error' }
 
 /** Handle returned by {@link createViewBridge}. */
 export type ViewBridgeHandle = {
@@ -182,7 +182,13 @@ export function createViewBridge(config: ViewBridgeConfig): ViewBridgeHandle {
       }
 
       // Serialize cache: avoid full tree walk when doc reference is unchanged
-      const current = cachedSerialize(prevDoc)
+      let current: string
+      try {
+        current = cachedSerialize(prevDoc)
+      } catch (error) {
+        onError({ code: 'serialize-error', message: 'failed to serialize current ProseMirror document', cause: error })
+        return { ok: false, reason: 'serialize-error' }
+      }
 
       if (incoming === current) {
         return markUnchanged(prevDoc, text, incoming)
@@ -241,9 +247,10 @@ export function createViewBridge(config: ViewBridgeConfig): ViewBridgeHandle {
       }
       view.dispatch(tr)
 
-      // Update caches after successful dispatch
+      // Update last-applied guard after successful dispatch.
+      // Do NOT pre-populate serializeCache: appendTransaction plugins may
+      // have further modified the doc, making `incoming` inaccurate.
       const newDoc = view.state.doc
-      serializeCache.set(newDoc, incoming)
       lastDoc = newDoc
       lastRaw = text
       lastIncoming = incoming
@@ -252,7 +259,13 @@ export function createViewBridge(config: ViewBridgeConfig): ViewBridgeHandle {
     },
 
     extractText(view: EditorView): string {
-      const text = serialize(view.state.doc)
+      let text: string
+      try {
+        text = serialize(view.state.doc)
+      } catch (error) {
+        onError({ code: 'serialize-error', message: 'failed to serialize ProseMirror document in extractText', cause: error })
+        throw error
+      }
       serializeCache.set(view.state.doc, normalize(text))
       return text
     },

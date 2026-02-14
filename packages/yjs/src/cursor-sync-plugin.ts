@@ -118,15 +118,30 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
   const cursorFieldName = options.cursorFieldName ?? 'pmCursor'
   const cmCursorFieldName = options.cmCursorFieldName ?? 'cursor'
 
+  if (sharedText && cursorFieldName === cmCursorFieldName) {
+    throw new Error(
+      `createCursorSyncPlugin: cursorFieldName and cmCursorFieldName must differ when sharedText is provided (both are "${cursorFieldName}")`,
+    )
+  }
+
   let warnedSyncPluginMissing = false
+
+  // Closure variable consumed in view.update — survives appendTransaction
+  // that would otherwise clear the plugin state before update() runs.
+  let pendingCmCursor: { anchor: number; head: number } | null = null
 
   // Cached cursor map (serialize-based) — rebuilt only when doc changes
   let cachedMap: CursorMap | null = null
   let cachedMapDoc: Node | null = null
 
-  function getOrBuildMap(doc: Node): CursorMap {
+  function getOrBuildMap(doc: Node): CursorMap | null {
     if (cachedMapDoc !== doc || !cachedMap) {
-      cachedMap = buildCursorMap(doc, serialize)
+      try {
+        cachedMap = buildCursorMap(doc, serialize)
+      } catch (error) {
+        warn({ code: 'cursor-map-error', message: 'failed to build cursor map — cursor sync skipped' })
+        cachedMap = null
+      }
       cachedMapDoc = doc
     }
     return cachedMap
@@ -144,18 +159,18 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
           | { anchor: number; head: number }
           | undefined
         if (cmMeta) {
-          return { pendingCm: cmMeta, mappedTextOffset: prev.mappedTextOffset }
+          pendingCmCursor = cmMeta
         }
 
         // Compute PM → text offset when selection or doc changes
         let mappedTextOffset = prev.mappedTextOffset
         if (tr.selectionSet || tr.docChanged) {
           const map = getOrBuildMap(newState.doc)
-          mappedTextOffset = cursorMapLookup(map, newState.selection.anchor)
+          mappedTextOffset = map ? cursorMapLookup(map, newState.selection.anchor) : null
         }
 
         return {
-          pendingCm: prev.pendingCm !== null ? null : prev.pendingCm,
+          pendingCm: pendingCmCursor,
           mappedTextOffset,
         }
       },
@@ -176,11 +191,12 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
       // converts those Y.Text relative positions to PM positions and
       // broadcasts to pmCursor — so the app never needs to forward CM ranges.
       const handleAwarenessUpdate = (
-        { updated }: { added: number[]; updated: number[]; removed: number[] },
+        { added, updated }: { added: number[]; updated: number[]; removed: number[] },
       ) => {
         if (suppressCmReaction) return
         if (!sharedText?.doc) return
-        if (!updated.includes(awareness.clientID)) return
+        const localId = awareness.clientID
+        if (!updated.includes(localId) && !added.includes(localId)) return
 
         const localState = awareness.getLocalState() as Record<string, unknown> | null
         if (!localState) return
@@ -188,21 +204,46 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
         const cmCursor = localState[cmCursorFieldName] as
           | { anchor: RelativePosition; head: RelativePosition }
           | undefined
-        if (!cmCursor?.anchor || !cmCursor?.head) return
+        if (!cmCursor?.anchor || !cmCursor?.head) {
+          // CM cursor was cleared — also clear pmCursor if it was previously set
+          if (lastCmAbsAnchor !== -1) {
+            awareness.setLocalStateField(cursorFieldName, null)
+            lastCmAbsAnchor = -1
+            lastCmAbsHead = -1
+          }
+          return
+        }
 
         const absAnchor = createAbsolutePositionFromRelativePosition(cmCursor.anchor, sharedText.doc!)
         const absHead = createAbsolutePositionFromRelativePosition(cmCursor.head, sharedText.doc!)
-        if (!absAnchor || !absHead) return
+        if (!absAnchor || !absHead) {
+          // Relative position can't be resolved — clear stale PM cursor
+          awareness.setLocalStateField(cursorFieldName, null)
+          lastCmAbsAnchor = -1
+          lastCmAbsHead = -1
+          return
+        }
 
         // Skip if unchanged (prevents loops from our own pmCursor broadcast)
         if (absAnchor.index === lastCmAbsAnchor && absHead.index === lastCmAbsHead) return
-        lastCmAbsAnchor = absAnchor.index
-        lastCmAbsHead = absHead.index
 
         const map = getOrBuildMap(editorView.state.doc)
+        if (!map) {
+          awareness.setLocalStateField(cursorFieldName, null)
+          return
+        }
         const pmAnchor = reverseCursorMapLookup(map, absAnchor.index)
         const pmHead = reverseCursorMapLookup(map, absHead.index)
-        if (pmAnchor === null || pmHead === null) return
+        if (pmAnchor === null || pmHead === null) {
+          // Mapping failed — clear stale PM cursor
+          awareness.setLocalStateField(cursorFieldName, null)
+          return
+        }
+
+        // Only update dedup cache after successful mapping — failed mapping
+        // must not prevent retry when the doc changes and the map resolves.
+        lastCmAbsAnchor = absAnchor.index
+        lastCmAbsHead = absHead.index
 
         cmCursorHandledByListener = true
         const ok = broadcastPmCursor(awareness, cursorFieldName, editorView, pmAnchor, pmHead)
@@ -218,38 +259,50 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
 
       return {
         update(view, prevState) {
-          const pluginState = cursorSyncPluginKey.getState(view.state)
-          const prevPluginState = cursorSyncPluginKey.getState(prevState)
+          // Invalidate dedup cache when doc changes so awareness listener
+          // re-broadcasts pmCursor even if text offsets haven't changed.
+          // Also re-trigger the handler to resolve cursors that failed mapping
+          // when the doc was stale (no new awareness update would fire).
+          if (view.state.doc !== prevState.doc) {
+            lastCmAbsAnchor = -1
+            lastCmAbsHead = -1
+            if (sharedText?.doc && !suppressCmReaction) {
+              handleAwarenessUpdate({ added: [awareness.clientID], updated: [], removed: [] })
+            }
+          }
 
-          // CM → awareness: broadcast when pendingCm is newly set.
+          // CM → awareness: broadcast when pendingCmCursor is set.
+          // Uses closure variable so appendTransaction cannot clear it.
           // If the awareness listener already converted yCollab's range to
           // pmCursor, skip here to avoid overwriting with collapsed data.
-          if (
-            pluginState?.pendingCm != null &&
-            pluginState.pendingCm !== prevPluginState?.pendingCm
-          ) {
+          if (pendingCmCursor != null) {
+            const cursor = pendingCmCursor
+            pendingCmCursor = null
             if (!cmCursorHandledByListener) {
               const map = getOrBuildMap(view.state.doc)
-              const pmAnchor = reverseCursorMapLookup(map, pluginState.pendingCm.anchor)
-              const pmHead = reverseCursorMapLookup(map, pluginState.pendingCm.head)
+              const pmAnchor = map ? reverseCursorMapLookup(map, cursor.anchor) : null
+              const pmHead = map ? reverseCursorMapLookup(map, cursor.head) : null
               if (pmAnchor !== null && pmHead !== null) {
                 const ok = broadcastPmCursor(awareness, cursorFieldName, view, pmAnchor, pmHead)
                 if (!ok && !warnedSyncPluginMissing) {
                   warnedSyncPluginMissing = true
                   warn({ code: 'ysync-plugin-missing', message: 'ySyncPlugin state not available — cursor broadcast skipped' })
                 }
-              }
-              // Also broadcast CM-format cursor so remote yCollab can render it.
-              // (When yCollab is active the listener handles this; this path
-              // covers the case where syncCmCursor is called without yCollab.)
-              if (sharedText) {
-                broadcastTextCursor(
-                  awareness,
-                  cmCursorFieldName,
-                  sharedText,
-                  pluginState.pendingCm.anchor,
-                  pluginState.pendingCm.head,
-                )
+                // Also broadcast CM-format cursor so remote yCollab can render it.
+                // (When yCollab is active the listener handles this; this path
+                // covers the case where syncCmCursor is called without yCollab.)
+                if (sharedText?.doc) {
+                  broadcastTextCursor(
+                    awareness,
+                    cmCursorFieldName,
+                    sharedText,
+                    cursor.anchor,
+                    cursor.head,
+                  )
+                }
+              } else {
+                // Mapping failed — clear stale PM cursor
+                awareness.setLocalStateField(cursorFieldName, null)
               }
             }
             cmCursorHandledByListener = false
@@ -265,26 +318,39 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
               view.state.doc !== prevState.doc)
           ) {
             suppressCmReaction = true
-            const { anchor, head } = view.state.selection
-            const ok = broadcastPmCursor(awareness, cursorFieldName, view, anchor, head)
-            if (!ok && !warnedSyncPluginMissing) {
-              warnedSyncPluginMissing = true
-              warn({ code: 'ysync-plugin-missing', message: 'ySyncPlugin state not available — cursor broadcast skipped' })
-            }
-            // Also broadcast CM-format cursor so remote yCollab can render it.
-            if (sharedText) {
-              const map = getOrBuildMap(view.state.doc)
-              const textAnchor = cursorMapLookup(map, anchor)
-              const textHead = cursorMapLookup(map, head)
-              if (textAnchor !== null && textHead !== null) {
-                broadcastTextCursor(awareness, cmCursorFieldName, sharedText, textAnchor, textHead)
+            try {
+              const { anchor, head } = view.state.selection
+              const ok = broadcastPmCursor(awareness, cursorFieldName, view, anchor, head)
+              if (!ok && !warnedSyncPluginMissing) {
+                warnedSyncPluginMissing = true
+                warn({ code: 'ysync-plugin-missing', message: 'ySyncPlugin state not available — cursor broadcast skipped' })
               }
+              // Also broadcast CM-format cursor so remote yCollab can render it.
+              if (sharedText?.doc) {
+                const map = getOrBuildMap(view.state.doc)
+                const textAnchor = map ? cursorMapLookup(map, anchor) : null
+                const textHead = map ? cursorMapLookup(map, head) : null
+                if (textAnchor !== null && textHead !== null) {
+                  broadcastTextCursor(awareness, cmCursorFieldName, sharedText, textAnchor, textHead)
+                } else {
+                  // Mapping failed — clear stale CM cursor
+                  awareness.setLocalStateField(cmCursorFieldName, null)
+                }
+              }
+            } finally {
+              suppressCmReaction = false
             }
-            suppressCmReaction = false
           }
+
+          // Always reset so a stale flag from a previous awareness update
+          // cannot suppress a later syncCmCursor broadcast.
+          cmCursorHandledByListener = false
         },
         destroy() {
+          // Clear cursor fields so remote clients don't see ghost cursors
+          awareness.setLocalStateField(cursorFieldName, null)
           if (sharedText) {
+            awareness.setLocalStateField(cmCursorFieldName, null)
             awareness.off('update', handleAwarenessUpdate)
           }
         },
@@ -307,7 +373,7 @@ export function syncCmCursor(view: EditorView, anchor: number, head?: number, on
     (onWarning ?? defaultOnWarning)({ code: 'cursor-sync-not-installed', message: 'cursor sync plugin is not installed on this EditorView' })
     return
   }
-  const sanitize = (v: number) => Math.max(0, Math.floor(v))
+  const sanitize = (v: number) => { const n = Math.floor(v); return Number.isFinite(n) ? Math.max(0, n) : 0 }
   view.dispatch(
     view.state.tr.setMeta(cursorSyncPluginKey, {
       anchor: sanitize(anchor),

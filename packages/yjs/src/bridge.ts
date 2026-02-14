@@ -14,6 +14,7 @@ export type ReplaceTextResult =
   | { ok: true }
   | { ok: false; reason: 'unchanged' }
   | { ok: false; reason: 'detached' }
+  | { ok: false; reason: 'serialize-error' }
 
 /** Result of {@link replaceSharedProseMirror}. */
 export type ReplaceProseMirrorResult =
@@ -204,7 +205,13 @@ export function createYjsBridge(
           return { source: 'initial', parseError: true }
         }
         const pmDoc = yXmlFragmentToProseMirrorRootNode(sharedProseMirror, schema)
-        const canonicalText = serialize(pmDoc)
+        let canonicalText: string
+        try {
+          canonicalText = serialize(pmDoc)
+        } catch (error) {
+          onError({ code: 'serialize-error', message: 'failed to serialize ProseMirror document during bootstrap', cause: error })
+          return { source: 'initial', parseError: true }
+        }
         replaceSharedText(sharedText, canonicalText, ORIGIN_INIT, normalize)
         lastBridgedText = normalize(canonicalText)
         return { source: 'initial' }
@@ -280,7 +287,13 @@ export function createYjsBridge(
   return {
     bootstrapResult,
     syncToSharedText(doc: Node): ReplaceTextResult {
-      const text = serialize(doc)
+      let text: string
+      try {
+        text = serialize(doc)
+      } catch (error) {
+        onError({ code: 'serialize-error', message: 'failed to serialize ProseMirror document', cause: error })
+        return { ok: false, reason: 'serialize-error' }
+      }
       const result = replaceSharedText(sharedText, text, ORIGIN_PM_TO_TEXT, normalize)
       // Always update lastBridgedText unless truly failed (detached).
       // 'unchanged' means Y.Text already has this content — still need to

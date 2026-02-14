@@ -4,7 +4,7 @@ import type { YjsBridgeHandle, OnWarning } from './types.js'
 
 type BridgeSyncState = { needsSync: boolean }
 
-type BridgeSyncFailure = { ok: false; reason: 'detached' }
+type BridgeSyncFailure = { ok: false; reason: 'detached' | 'serialize-error' }
 
 /** Options for {@link createBridgeSyncPlugin}. */
 export type BridgeSyncPluginOptions = {
@@ -17,7 +17,7 @@ export type BridgeSyncPluginOptions = {
 /** ProseMirror plugin key for {@link createBridgeSyncPlugin}. Use to read the plugin state. */
 export const bridgeSyncPluginKey = new PluginKey<BridgeSyncState>('pm-cm-bridge-sync')
 
-const wiredBridges = new WeakSet<YjsBridgeHandle>()
+const wiredBridges = new WeakMap<YjsBridgeHandle, number>()
 
 const defaultOnWarning: OnWarning = (event) => console.warn(`[pm-cm] ${event.code}: ${event.message}`)
 
@@ -33,10 +33,6 @@ export function createBridgeSyncPlugin(
   options: BridgeSyncPluginOptions = {},
 ): Plugin {
   const warn = options.onWarning ?? defaultOnWarning
-  if (wiredBridges.has(bridge)) {
-    warn({ code: 'bridge-already-wired', message: 'this bridge is already wired to another plugin instance' })
-  }
-  wiredBridges.add(bridge)
 
   // Tracks whether any Yjs-originated docChange was seen in the current
   // dispatch batch. Reset in view.update after each cycle.
@@ -55,7 +51,7 @@ export function createBridgeSyncPlugin(
         return { needsSync: false }
       },
       apply(tr, prev): BridgeSyncState {
-        if (!tr.docChanged) return prev
+        if (!tr.docChanged) return { needsSync }
         if (bridge.isYjsSyncChange(tr)) {
           yjsBatchSeen = true
           needsSync = false
@@ -71,12 +67,18 @@ export function createBridgeSyncPlugin(
     },
 
     view() {
+      const count = wiredBridges.get(bridge) ?? 0
+      if (count > 0) {
+        warn({ code: 'bridge-already-wired', message: 'this bridge is already wired to another plugin instance' })
+      }
+      wiredBridges.set(bridge, count + 1)
+
       return {
         update(view) {
           if (needsSync) {
             const result = bridge.syncToSharedText(view.state.doc)
             if (!result.ok) {
-              if (result.reason === 'detached') {
+              if (result.reason !== 'unchanged') {
                 options.onSyncFailure?.(result, view)
                 warn({ code: 'sync-failed', message: `bridge sync failed: ${result.reason}` })
               }
@@ -86,7 +88,9 @@ export function createBridgeSyncPlugin(
           yjsBatchSeen = false
         },
         destroy() {
-          wiredBridges.delete(bridge)
+          const remaining = (wiredBridges.get(bridge) ?? 1) - 1
+          if (remaining <= 0) wiredBridges.delete(bridge)
+          else wiredBridges.set(bridge, remaining)
         },
       }
     },

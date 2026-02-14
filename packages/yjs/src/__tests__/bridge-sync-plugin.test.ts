@@ -46,8 +46,14 @@ describe('createBridgeSyncPlugin', () => {
     const bridge = makeMockBridge()
     const onWarning = vi.fn()
 
-    createBridgeSyncPlugin(bridge, { onWarning })
-    createBridgeSyncPlugin(bridge, { onWarning })
+    // Warning fires when the second plugin's view is mounted
+    const view1 = tracked(createView(bridge, { onWarning }))
+    expect(onWarning).not.toHaveBeenCalled()
+
+    const plugin2 = createBridgeSyncPlugin(bridge, { onWarning })
+    const doc = schema.node('doc', null, [schema.node('paragraph', null, [schema.text('hello')])])
+    const state2 = EditorState.create({ schema, doc, plugins: [plugin2] })
+    const view2 = tracked(new EditorView(document.createElement('div'), { state: state2 }))
 
     expect(onWarning).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -61,8 +67,12 @@ describe('createBridgeSyncPlugin', () => {
     const bridge = makeMockBridge()
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    createBridgeSyncPlugin(bridge)
-    createBridgeSyncPlugin(bridge)
+    const view1 = tracked(createView(bridge))
+
+    const plugin2 = createBridgeSyncPlugin(bridge)
+    const doc = schema.node('doc', null, [schema.node('paragraph', null, [schema.text('hello')])])
+    const state2 = EditorState.create({ schema, doc, plugins: [plugin2] })
+    const view2 = tracked(new EditorView(document.createElement('div'), { state: state2 }))
 
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('already wired'))
     spy.mockRestore()
