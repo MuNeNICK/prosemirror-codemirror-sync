@@ -35,10 +35,11 @@ export function createBridgeSyncPlugin(
   const warn = options.onWarning ?? defaultOnWarning
 
   // Tracks whether any Yjs-originated docChange was seen in the current
-  // dispatch batch. Reset in view.update after each cycle.
-  // appendTransaction plugins (e.g. prosemirror-tables) may emit follow-up
-  // transactions that lack ySyncPlugin meta — this flag prevents those
-  // from triggering a spurious text→PM→text round-trip.
+  // dispatch batch. Used to suppress follow-up appendTransactions (e.g.
+  // prosemirror-tables normalization) that lack ySyncPlugin meta but are
+  // derived from the same Yjs update. Only suppresses transactions that
+  // carry ProseMirror's "appendedTransaction" meta — genuine user edits
+  // (direct dispatches) always propagate to Y.Text.
   let yjsBatchSeen = false
   // Closure flag consumed in view.update — avoids sticky plugin state across dispatches.
   let needsSync = false
@@ -54,12 +55,14 @@ export function createBridgeSyncPlugin(
         if (!tr.docChanged) return { needsSync }
         if (bridge.isYjsSyncChange(tr)) {
           yjsBatchSeen = true
-          needsSync = false
-          return { needsSync: false }
+          return { needsSync }
         }
-        if (yjsBatchSeen) {
-          needsSync = false
-          return { needsSync: false }
+        // Follow-up appendTransaction after a ySync change (e.g.
+        // prosemirror-tables normalization triggered by a remote update):
+        // suppress to avoid redundant serialization. Direct user edits
+        // never carry "appendedTransaction" meta.
+        if (yjsBatchSeen && tr.getMeta('appendedTransaction')) {
+          return { needsSync }
         }
         needsSync = true
         return { needsSync: true }

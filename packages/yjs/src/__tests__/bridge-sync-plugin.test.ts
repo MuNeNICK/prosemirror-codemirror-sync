@@ -209,6 +209,39 @@ describe('createBridgeSyncPlugin', () => {
     expect(bridge.syncToSharedText).toHaveBeenCalledOnce()
   })
 
+  it('syncs when user edit precedes a yjs appendTransaction in the same batch', () => {
+    // Simulate: user dispatches a doc change, then ySyncPlugin emits an
+    // appendTransaction (yjs-originated). The user edit must still sync.
+    let callCount = 0
+    const bridge = makeMockBridge({
+      isYjsSyncChange: vi.fn(() => {
+        callCount++
+        // First call (dispatched user edit) is NOT yjs-originated;
+        // second call (appended ySync tr) IS yjs-originated.
+        return callCount === 2
+      }),
+    })
+
+    // Plugin that simulates ySyncPlugin appending a yjs change
+    const yjsAppendPlugin = new Plugin({
+      appendTransaction(_trs, _oldState, newState) {
+        const text = newState.doc.textContent
+        if (!text.includes('!')) {
+          return newState.tr.insertText('!', newState.doc.content.size - 1)
+        }
+        return null
+      },
+    })
+
+    const view = tracked(createView(bridge, { onWarning: vi.fn() }, [yjsAppendPlugin]))
+
+    // Dispatch a local user edit
+    view.dispatch(view.state.tr.insertText(' world', 6))
+
+    // The user edit must be synced despite the yjs appendTransaction
+    expect(bridge.syncToSharedText).toHaveBeenCalledOnce()
+  })
+
   it('resets yjsBatchSeen between separate dispatches', () => {
     let callCount = 0
     const bridge = makeMockBridge({
