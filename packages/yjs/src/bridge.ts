@@ -163,6 +163,7 @@ export function createYjsBridge(
   } = config
   const normalize = config.normalize ?? defaultNormalize
   const onError = config.onError ?? defaultOnError
+  const skipOrigins = config.skipOrigins ?? null
 
   if (!sharedText.doc) {
     throw new Error('sharedText is not attached to any Y.Doc')
@@ -322,6 +323,16 @@ export function createYjsBridge(
     // destroying existing Yjs Item IDs and invalidating cursor
     // RelativePositions held by peers in Awareness state.
     if (transactionTouchedXmlFragment(transaction.changed, sharedProseMirror)) {
+      lastBridgedText = normalize(sharedText.toString())
+      return
+    }
+
+    // When multiple clients run a bridge, a remote Y.Text change and its
+    // corresponding Y.XmlFragment change arrive as separate transactions.
+    // Writing to XmlFragment here would race with the remote XmlFragment
+    // update, causing the CRDT to keep both insertions (duplicate nodes).
+    // Skip the sync and let the remote XmlFragment update handle it.
+    if (skipOrigins !== null && skipOrigins.has(transaction.origin)) {
       lastBridgedText = normalize(sharedText.toString())
       return
     }

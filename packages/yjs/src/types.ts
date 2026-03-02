@@ -45,6 +45,32 @@ export type YjsBridgeConfig = {
   normalize?: Normalize
   /** Called on non-fatal errors (e.g. parse failures). Defaults to `console.error`. */
   onError?: OnError
+  /**
+   * Set of Y.Doc transaction origins for which the bridge should NOT run
+   * text → ProseMirror sync.
+   *
+   * **When to use:** When multiple clients each run a bridge, a remote
+   * Y.Text change and its corresponding Y.XmlFragment change may arrive
+   * as separate transactions (they originate from separate `doc.transact`
+   * calls and travel as separate provider messages). Without this option
+   * the receiving bridge writes to XmlFragment for the Y.Text-only
+   * transaction, and the subsequent CRDT merge with the remote
+   * XmlFragment update creates duplicate nodes (especially empty
+   * paragraphs whose content is identical).
+   *
+   * **Important:** Only include origins where every Y.Text change is
+   * guaranteed to be accompanied by a corresponding Y.XmlFragment update
+   * (i.e. the sender also runs a bridge). Do **not** include origins used
+   * by text-only producers (e.g. a CodeMirror-only peer without a bridge),
+   * or ProseMirror will miss those changes and become stale.
+   *
+   * @example
+   * ```ts
+   * // All peers run a bridge — safe to skip remote origins
+   * skipOrigins: new Set(['remote'])
+   * ```
+   */
+  skipOrigins?: Set<unknown>
 }
 
 /**
