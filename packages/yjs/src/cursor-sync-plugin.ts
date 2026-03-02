@@ -347,11 +347,17 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
           cmCursorHandledByListener = false
         },
         destroy() {
+          // Remove listener BEFORE clearing fields to avoid infinite
+          // recursion: setLocalStateField emits 'update' synchronously,
+          // which would re-enter handleAwarenessUpdate while the cursor
+          // field is still set, causing broadcastPmCursor → update → …
+          if (sharedText) {
+            awareness.off('update', handleAwarenessUpdate)
+          }
           // Clear cursor fields so remote clients don't see ghost cursors
           awareness.setLocalStateField(cursorFieldName, null)
           if (sharedText) {
             awareness.setLocalStateField(cmCursorFieldName, null)
-            awareness.off('update', handleAwarenessUpdate)
           }
         },
       }

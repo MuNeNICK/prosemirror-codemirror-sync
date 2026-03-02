@@ -9,6 +9,30 @@ import { ORIGIN_INIT, ORIGIN_TEXT_TO_PM, ORIGIN_PM_TO_TEXT } from './types.js'
 const defaultNormalize: Normalize = (s) => s.replace(/\r\n?/g, '\n')
 const defaultOnError: OnError = (event) => console.error(`[bridge] ${event.code}: ${event.message}`, event.cause)
 
+/**
+ * Check whether any type modified in the transaction belongs to the
+ * given XmlFragment subtree (the fragment itself or any descendant).
+ *
+ * Uses the Yjs internal `_item.parent` chain which has been stable
+ * across the 13.x series and is also relied on by y-prosemirror.
+ */
+function transactionTouchedXmlFragment(
+  changed: Map<object, Set<string | null>>,
+  xmlFragment: YXmlFragment,
+): boolean {
+  for (const type of changed.keys()) {
+    if (type === xmlFragment) return true
+    // Walk the parent chain from the changed type up to the root.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let item = (type as any)._item
+    while (item) {
+      if (item.parent === xmlFragment) return true
+      item = item.parent?._item ?? null
+    }
+  }
+  return false
+}
+
 /** Result of {@link replaceSharedText}. */
 export type ReplaceTextResult =
   | { ok: true }
@@ -269,26 +293,21 @@ export function createYjsBridge(
 
   const textObserver = (
     _: unknown,
-    transaction: { origin: unknown },
+    transaction: { origin: unknown; changed: Map<object, Set<string | null>> },
   ) => {
     if (transaction.origin === ORIGIN_PM_TO_TEXT || transaction.origin === ORIGIN_INIT) {
       return
     }
 
-    const text = normalize(sharedText.toString())
-    if (lastBridgedText === text) {
-      return
-    }
-
-    // When the XmlFragment already reflects the current text (e.g. a remote
-    // Y.Doc update applied via Y.applyUpdate that modified both shared types
-    // atomically), skip the sync. Calling syncTextToProsemirror would
+    // When the same transaction also modified the XmlFragment subtree
+    // (e.g. a remote Y.Doc update applied via Y.applyUpdate that modified
+    // both shared types atomically), ySyncPlugin already handles the
+    // XmlFragment → PM direction. Calling syncTextToProsemirror would
     // redundantly reconstruct the XmlFragment via prosemirrorToYXmlFragment,
     // destroying existing Yjs Item IDs and invalidating cursor
     // RelativePositions held by peers in Awareness state.
-    const currentXmlText = sharedProseMirrorToText(sharedProseMirror)
-    if (currentXmlText !== null && currentXmlText === text) {
-      lastBridgedText = text
+    if (transactionTouchedXmlFragment(transaction.changed, sharedProseMirror)) {
+      lastBridgedText = normalize(sharedText.toString())
       return
     }
 
