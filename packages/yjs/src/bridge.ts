@@ -275,6 +275,23 @@ export function createYjsBridge(
       return
     }
 
+    const text = normalize(sharedText.toString())
+    if (lastBridgedText === text) {
+      return
+    }
+
+    // When the XmlFragment already reflects the current text (e.g. a remote
+    // Y.Doc update applied via Y.applyUpdate that modified both shared types
+    // atomically), skip the sync. Calling syncTextToProsemirror would
+    // redundantly reconstruct the XmlFragment via prosemirrorToYXmlFragment,
+    // destroying existing Yjs Item IDs and invalidating cursor
+    // RelativePositions held by peers in Awareness state.
+    const currentXmlText = sharedProseMirrorToText(sharedProseMirror)
+    if (currentXmlText !== null && currentXmlText === text) {
+      lastBridgedText = text
+      return
+    }
+
     syncTextToProsemirror(ORIGIN_TEXT_TO_PM)
   }
 
