@@ -193,7 +193,22 @@ export function createYjsBridge(
       onError,
     })
     if (result.ok) {
-      lastBridgedText = text
+      // Canonicalize: derive the round-trip text from the XmlFragment we just wrote.
+      // If parse is non-idempotent (serialize(parse(text)) !== text), update Y.Text
+      // to the canonical form so both shared types agree and future bridge mounts
+      // find `both-match` instead of repeatedly reconciling with structural drift.
+      let canonical = text
+      try {
+        const pmDoc = yXmlFragmentToProseMirrorRootNode(sharedProseMirror, schema)
+        canonical = normalize(serialize(pmDoc))
+        if (canonical !== text) {
+          replaceSharedText(sharedText, canonical, ORIGIN_INIT, normalize)
+        }
+      } catch {
+        // Serialization failure during canonicalization is non-fatal;
+        // fall back to using the original text as lastBridgedText.
+      }
+      lastBridgedText = canonical
     }
     return result.ok
   }
