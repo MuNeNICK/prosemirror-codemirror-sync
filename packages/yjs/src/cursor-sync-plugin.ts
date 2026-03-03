@@ -89,6 +89,9 @@ function broadcastTextCursor(
 
 const defaultOnWarning: OnWarning = (event) => console.warn(`[pm-cm] ${event.code}: ${event.message}`)
 
+const awarenessRefCounts = new WeakMap<Awareness, number>()
+const awarenessFieldNames = new WeakMap<Awareness, Set<string>>()
+
 /** Options for {@link createCursorSyncPlugin}. */
 export type CursorSyncPluginOptions = {
   awareness: Awareness
@@ -177,6 +180,19 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
     },
 
     view(editorView) {
+      const viewCount = awarenessRefCounts.get(awareness) ?? 0
+      awarenessRefCounts.set(awareness, viewCount + 1)
+      // Track field names for cleanup on last destroy
+      let fieldNames = awarenessFieldNames.get(awareness)
+      if (!fieldNames) {
+        fieldNames = new Set()
+        awarenessFieldNames.set(awareness, fieldNames)
+      }
+      fieldNames.add(cursorFieldName)
+      if (sharedText) {
+        fieldNames.add(cmCursorFieldName)
+      }
+
       // Suppress awareness listener reactions when PM broadcasts to cmCursorFieldName
       let suppressCmReaction = false
       // Track last resolved CM cursor to avoid redundant pmCursor broadcasts
@@ -232,6 +248,11 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
             lastCmAbsHead = -1
             return
           }
+          // Reject payloads from different Y.Text instances (e.g., when
+          // multiple views share one Awareness but use different Y.Text).
+          if (absAnchor.type !== sharedText || absHead.type !== sharedText) {
+            return
+          }
 
           // Skip if unchanged (prevents loops from our own pmCursor broadcast)
           if (absAnchor.index === lastCmAbsAnchor && absHead.index === lastCmAbsHead) return
@@ -254,12 +275,25 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
           lastCmAbsAnchor = absAnchor.index
           lastCmAbsHead = absHead.index
 
-          cmCursorHandledByListener = true
+          // Only suppress pendingCm broadcast when there IS a pending
+          // CM cursor that would be redundant with the listener's broadcast.
+          // Without this guard, the flag can stay true across awareness events
+          // with no PM transaction, suppressing a later syncCmCursor broadcast.
+          if (pendingCmCursor != null) {
+            cmCursorHandledByListener = true
+          }
           const ok = broadcastPmCursor(awareness, cursorFieldName, editorView, pmAnchor, pmHead)
           if (!ok && !warnedSyncPluginMissing) {
             warnedSyncPluginMissing = true
             warn({ code: 'ysync-plugin-missing', message: 'ySyncPlugin state not available — cursor broadcast skipped' })
           }
+        } catch {
+          // Malformed cursor payload (e.g., non-RelativePosition from a
+          // misbehaving peer) or resolution failure — clear stale cursor
+          // to prevent ghost cursors, and reset dedup cache.
+          awareness.setLocalStateField(cursorFieldName, null)
+          lastCmAbsAnchor = -1
+          lastCmAbsHead = -1
         } finally {
           inAwarenessHandler = false
         }
@@ -313,8 +347,11 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
                   )
                 }
               } else {
-                // Mapping failed — clear stale PM cursor
+                // Mapping failed — clear stale cursors
                 awareness.setLocalStateField(cursorFieldName, null)
+                if (sharedText?.doc) {
+                  awareness.setLocalStateField(cmCursorFieldName, null)
+                }
               }
             }
             cmCursorHandledByListener = false
@@ -366,10 +403,24 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
           if (sharedText) {
             awareness.off('update', handleAwarenessUpdate)
           }
-          // Clear cursor fields so remote clients don't see ghost cursors
-          awareness.setLocalStateField(cursorFieldName, null)
-          if (sharedText) {
-            awareness.setLocalStateField(cmCursorFieldName, null)
+          // Only clear cursor fields when the last view using this
+          // awareness is destroyed. Otherwise, destroying one view in
+          // a multi-view setup clears cursors for all remaining views.
+          const remaining = (awarenessRefCounts.get(awareness) ?? 1) - 1
+          if (remaining <= 0) {
+            awarenessRefCounts.delete(awareness)
+            // Clear all cursor field names registered by any instance
+            // using this Awareness, preventing ghost cursors from
+            // instances that used different field names.
+            const fields = awarenessFieldNames.get(awareness)
+            if (fields) {
+              for (const field of fields) {
+                awareness.setLocalStateField(field, null)
+              }
+              awarenessFieldNames.delete(awareness)
+            }
+          } else {
+            awarenessRefCounts.set(awareness, remaining)
           }
         },
       }

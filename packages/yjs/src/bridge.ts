@@ -39,6 +39,8 @@ export type ReplaceTextResult =
   | { ok: false; reason: 'unchanged' }
   | { ok: false; reason: 'detached' }
   | { ok: false; reason: 'serialize-error' }
+  | { ok: false; reason: 'skip-pending' }
+  | { ok: false; reason: 'parse-failed' }
 
 /** Result of {@link replaceSharedProseMirror}. */
 export type ReplaceProseMirrorResult =
@@ -180,6 +182,23 @@ export function createYjsBridge(
 
   let lastBridgedText: string | null = null
 
+  // Manages the deferred fallback for skipOrigins: an XmlFragment observer
+  // detects when the expected remote update arrives (cancelling the fallback),
+  // and a timeout fires the fallback only if the update never arrives.
+  let pendingSkipCleanup: (() => void) | null = null
+
+  // When true, syncToSharedText is blocked. Set during the skip window
+  // (between a skipOrigins Y.Text change and the paired XmlFragment update)
+  // to prevent stale PM content from overwriting newer Y.Text.
+  let skipPending = false
+
+  // When true, syncToSharedText is blocked because the last
+  // syncTextToProsemirror failed to parse. PM is stale and must not
+  // overwrite newer Y.Text content. Cleared on the next successful parse
+  // or when a transaction touches both Y.Text and XmlFragment (ySyncPlugin
+  // handles the XmlFragment → PM direction in that case).
+  let parseFailed = false
+
   /** Returns `true` if the parse succeeded. */
   const syncTextToProsemirror = (origin: unknown): boolean => {
     const text = normalize(sharedText.toString())
@@ -194,6 +213,7 @@ export function createYjsBridge(
       onError,
     })
     if (result.ok) {
+      parseFailed = false
       // Canonicalize only during bootstrap (ORIGIN_INIT).
       //
       // During live editing the text may be in an intermediate state where
@@ -220,6 +240,13 @@ export function createYjsBridge(
         }
       }
       lastBridgedText = canonical
+    } else {
+      parseFailed = true
+      // Parse failed — still update lastBridgedText to prevent the
+      // textObserver from re-attempting the same failed parse on every
+      // Y.Text change. PM→Y.Text writes are blocked by the parseFailed
+      // flag until the next successful syncTextToProsemirror.
+      lastBridgedText = text
     }
     return result.ok
   }
@@ -290,13 +317,20 @@ export function createYjsBridge(
       let parseError = false
       if (fallbackText.length > 0) {
         replaceSharedText(sharedText, fallbackText, ORIGIN_INIT, normalize)
+        lastBridgedText = normalize(fallbackText)
         const fallbackResult = replaceSharedProseMirror(doc, sharedProseMirror, fallbackText, ORIGIN_INIT, {
           schema,
           parse,
           normalize,
           onError,
         })
-        if (!fallbackResult.ok) parseError = true
+        if (!fallbackResult.ok) {
+          parseError = true
+          // Block PM→Y.Text writes — PM is stale (XmlFragment wasn't
+          // updated because parse failed). Without this, a subsequent
+          // PM edit can overwrite the authoritative Y.Text content.
+          parseFailed = true
+        }
       }
       return { source: 'text', ...(parseError && { parseError: true }) }
     }
@@ -334,6 +368,10 @@ export function createYjsBridge(
     // RelativePositions held by peers in Awareness state.
     if (transactionTouchedXmlFragment(transaction.changed, sharedProseMirror)) {
       lastBridgedText = normalize(sharedText.toString())
+      // XmlFragment was also updated in this transaction — ySyncPlugin
+      // handles the XmlFragment → PM direction, so PM is up to date.
+      // Clear parseFailed since PM is no longer stale.
+      parseFailed = false
       return
     }
 
@@ -342,8 +380,117 @@ export function createYjsBridge(
     // Writing to XmlFragment here would race with the remote XmlFragment
     // update, causing the CRDT to keep both insertions (duplicate nodes).
     // Skip the sync and let the remote XmlFragment update handle it.
+    //
+    // Event-driven fallback: install a one-shot XmlFragment observer to
+    // detect when the expected update arrives (cancelling the fallback).
+    // A timeout fires the fallback only if no XmlFragment change arrives,
+    // preventing PM from becoming permanently stale when the sender is
+    // a text-only producer or the XmlFragment update was lost.
     if (skipOrigins !== null && skipOrigins.has(transaction.origin)) {
-      lastBridgedText = normalize(sharedText.toString())
+      const expectedText = normalize(sharedText.toString())
+      lastBridgedText = expectedText
+
+      // If XmlFragment already matches the expected text (e.g., the paired
+      // XmlFragment update arrived before the Y.Text update), no skip
+      // window is needed — XmlFragment is already caught up.
+      const pmTextNow = sharedProseMirrorToText(sharedProseMirror)
+      if (pmTextNow !== null && normalize(pmTextNow) === expectedText) {
+        parseFailed = false
+        // Clean up any previous pending skip fallback so its skipPending
+        // doesn't remain latched after this early return.
+        if (pendingSkipCleanup) pendingSkipCleanup()
+        return
+      }
+
+      // Snapshot XmlFragment state at skip start. The fallback uses this
+      // to detect whether XmlFragment was modified during the skip window
+      // (by ySyncPlugin or local PM edits). If modified, the fallback
+      // must NOT overwrite XmlFragment with older Y.Text content.
+      const xmlTextAtSkipStart = pmTextNow
+
+      // Cancel any previous pending skip fallback BEFORE setting skipPending,
+      // because the previous cleanup sets skipPending = false.
+      if (pendingSkipCleanup) pendingSkipCleanup()
+      skipPending = true
+
+      let resolved = false
+
+      const resolve = () => {
+        if (resolved) return
+        resolved = true
+        skipPending = false
+        sharedProseMirror.unobserveDeep(xmlCatchUpObserver)
+        clearTimeout(timer)
+        pendingSkipCleanup = null
+      }
+
+      // Observe deep XmlFragment changes to detect when the expected
+      // remote update arrives. Requires BOTH origin match AND content
+      // verification: origin alone is coarse (shared across peers) and
+      // could match an unrelated update, prematurely unblocking stale
+      // PM→Y.Text writes. Content verification ensures the XmlFragment
+      // has actually caught up to the expected text. When parse/serialize
+      // is non-idempotent (content never matches), the timeout fallback
+      // handles it.
+      const xmlCatchUpObserver = (
+        _events: unknown[],
+        transaction: { origin: unknown },
+      ) => {
+        if (resolved) return
+        if (skipOrigins!.has(transaction.origin)) {
+          const pmText = sharedProseMirrorToText(sharedProseMirror)
+          if (pmText !== null && normalize(pmText) === expectedText) {
+            // XmlFragment caught up — ySyncPlugin updates PM, so
+            // PM is no longer stale from any prior parse failure.
+            parseFailed = false
+            resolve()
+          }
+        }
+      }
+
+      const runFallback = () => {
+        resolve()
+        // Guard: if text has changed since, a newer update superseded this one.
+        if (lastBridgedText !== expectedText) return
+        // Verify XmlFragment caught up by comparing its serialized form.
+        const pmText = sharedProseMirrorToText(sharedProseMirror)
+        if (pmText === null || normalize(pmText) !== expectedText) {
+          // If XmlFragment was modified during the skip window (by
+          // ySyncPlugin applying remote updates or by local PM edits),
+          // the current state is authoritative — do NOT overwrite with
+          // older Y.Text content. Update lastBridgedText and let the
+          // normal bridge flow reconcile via syncToSharedText.
+          //
+          // Three cases detect modification:
+          // 1. XmlFragment content differs from the snapshot at skip start.
+          // 2. XmlFragment was unserializable at skip start but is now
+          //    serializable — something changed its structure.
+          // 3. XmlFragment was serializable at skip start but is now
+          //    unserializable — structure was modified in a breaking way.
+          const changedDuringSkip =
+            (xmlTextAtSkipStart !== null && pmText !== null && normalize(pmText) !== normalize(xmlTextAtSkipStart))
+            || (xmlTextAtSkipStart === null && pmText !== null)
+            || (xmlTextAtSkipStart !== null && pmText === null)
+          if (changedDuringSkip) {
+            lastBridgedText = pmText !== null ? normalize(pmText) : lastBridgedText
+            // Do NOT clear parseFailed here. XmlFragment changed but
+            // hasn't caught up to expectedText — PM may be at an
+            // intermediate state. Keeping parseFailed blocks stale
+            // PM→Y.Text writes until a new Y.Text change triggers
+            // a successful syncTextToProsemirror.
+            return
+          }
+          // XmlFragment unchanged since skip start — truly stale
+          // (paired XmlFragment never arrived). Sync Y.Text → XmlFragment.
+          lastBridgedText = null
+          syncTextToProsemirror(ORIGIN_TEXT_TO_PM)
+        }
+      }
+
+      const timer = setTimeout(runFallback, 500)
+
+      sharedProseMirror.observeDeep(xmlCatchUpObserver)
+      pendingSkipCleanup = resolve
       return
     }
 
@@ -359,6 +506,19 @@ export function createYjsBridge(
   return {
     bootstrapResult,
     syncToSharedText(doc: Node): ReplaceTextResult {
+      // Block PM→Y.Text writes during the skip window to prevent stale
+      // PM content from overwriting newer Y.Text. The skip is resolved
+      // when the paired XmlFragment update arrives (observer) or by the
+      // timeout fallback.
+      if (skipPending) {
+        return { ok: false, reason: 'skip-pending' }
+      }
+      // Block PM→Y.Text writes when the last Y.Text→PM parse failed.
+      // PM is stale and writing it back would resurrect deleted content.
+      // Cleared on the next successful syncTextToProsemirror.
+      if (parseFailed) {
+        return { ok: false, reason: 'parse-failed' }
+      }
       let text: string
       try {
         text = serialize(doc)
@@ -387,6 +547,7 @@ export function createYjsBridge(
     },
     dispose() {
       sharedText.unobserve(textObserver)
+      if (pendingSkipCleanup) pendingSkipCleanup()
     },
   }
 }

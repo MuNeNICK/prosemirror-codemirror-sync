@@ -18,6 +18,16 @@ export default defineConfig({
       '@pm-cm/core': path.resolve(__dirname, 'packages/core/src/index.ts'),
       '@pm-cm/yjs': path.resolve(__dirname, 'packages/yjs/src/index.ts'),
     },
+    dedupe: [
+      '@codemirror/state',
+      '@codemirror/view',
+      '@codemirror/language',
+      'yjs',
+      'y-protocols',
+      'prosemirror-model',
+      'prosemirror-state',
+      'prosemirror-view',
+    ],
   },
   test: {
     environment: 'jsdom',

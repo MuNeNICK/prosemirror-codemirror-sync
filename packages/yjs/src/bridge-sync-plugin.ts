@@ -4,7 +4,7 @@ import type { YjsBridgeHandle, OnWarning } from './types.js'
 
 type BridgeSyncState = { needsSync: boolean }
 
-type BridgeSyncFailure = { ok: false; reason: 'detached' | 'serialize-error' }
+type BridgeSyncFailure = { ok: false; reason: 'detached' | 'serialize-error' | 'parse-failed' }
 
 /** Options for {@link createBridgeSyncPlugin}. */
 export type BridgeSyncPluginOptions = {
@@ -12,6 +12,11 @@ export type BridgeSyncPluginOptions = {
   onSyncFailure?: (result: BridgeSyncFailure, view: EditorView) => void
   /** Called for non-fatal warnings. Default `console.warn`. */
   onWarning?: OnWarning
+  /**
+   * When `true`, automatically call `bridge.dispose()` when the last
+   * plugin instance for this bridge is destroyed. Default `false`.
+   */
+  autoDispose?: boolean
 }
 
 /** ProseMirror plugin key for {@link createBridgeSyncPlugin}. Use to read the plugin state. */
@@ -34,13 +39,6 @@ export function createBridgeSyncPlugin(
 ): Plugin {
   const warn = options.onWarning ?? defaultOnWarning
 
-  // Tracks whether any Yjs-originated docChange was seen in the current
-  // dispatch batch. Used to suppress follow-up appendTransactions (e.g.
-  // prosemirror-tables normalization) that lack ySyncPlugin meta but are
-  // derived from the same Yjs update. Only suppresses transactions that
-  // carry ProseMirror's "appendedTransaction" meta — genuine user edits
-  // (direct dispatches) always propagate to Y.Text.
-  let yjsBatchSeen = false
   // Closure flag consumed in view.update — avoids sticky plugin state across dispatches.
   let needsSync = false
 
@@ -53,15 +51,13 @@ export function createBridgeSyncPlugin(
       },
       apply(tr, _prev): BridgeSyncState {
         if (!tr.docChanged) return { needsSync }
+        // Skip the direct Yjs-originated transaction (the ySyncPlugin change
+        // itself). Follow-up appendTransactions (e.g. prosemirror-tables
+        // normalization) ARE allowed to set needsSync — if they materially
+        // change the doc, the resulting text must reach Y.Text.
+        // replaceSharedText's 'unchanged' check prevents redundant writes
+        // when the appended change does not affect the serialized output.
         if (bridge.isYjsSyncChange(tr)) {
-          yjsBatchSeen = true
-          return { needsSync }
-        }
-        // Follow-up appendTransaction after a ySync change (e.g.
-        // prosemirror-tables normalization triggered by a remote update):
-        // suppress to avoid redundant serialization. Direct user edits
-        // never carry "appendedTransaction" meta.
-        if (yjsBatchSeen && tr.getMeta('appendedTransaction')) {
           return { needsSync }
         }
         needsSync = true
@@ -81,6 +77,17 @@ export function createBridgeSyncPlugin(
           if (needsSync) {
             const result = bridge.syncToSharedText(view.state.doc)
             if (!result.ok) {
+              // skip-pending / parse-failed: preserve needsSync so the edit
+              // is retried on the next view update after the condition resolves.
+              // parse-failed is reported to the caller unlike skip-pending.
+              if (result.reason === 'skip-pending') {
+                return
+              }
+              if (result.reason === 'parse-failed') {
+                options.onSyncFailure?.(result, view)
+                warn({ code: 'sync-failed', message: `bridge sync failed: ${result.reason}` })
+                return
+              }
               if (result.reason !== 'unchanged') {
                 options.onSyncFailure?.(result, view)
                 warn({ code: 'sync-failed', message: `bridge sync failed: ${result.reason}` })
@@ -88,12 +95,15 @@ export function createBridgeSyncPlugin(
             }
           }
           needsSync = false
-          yjsBatchSeen = false
         },
         destroy() {
           const remaining = (wiredBridges.get(bridge) ?? 1) - 1
-          if (remaining <= 0) wiredBridges.delete(bridge)
-          else wiredBridges.set(bridge, remaining)
+          if (remaining <= 0) {
+            wiredBridges.delete(bridge)
+            if (options.autoDispose) bridge.dispose()
+          } else {
+            wiredBridges.set(bridge, remaining)
+          }
         },
       }
     },

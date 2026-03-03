@@ -201,6 +201,7 @@ export const WysiwygPane = memo(function WysiwygPane({
     const editorView = new ProseMirrorEditorView(hostElement, {
       state: createProseMirrorState(initialText, collab),
       dispatchTransaction(transaction) {
+        if (editorView.isDestroyed) return
         const nextState = editorView.state.apply(transaction)
         editorView.updateState(nextState)
 

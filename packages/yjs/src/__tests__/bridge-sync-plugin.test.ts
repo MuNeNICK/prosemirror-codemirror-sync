@@ -150,10 +150,11 @@ describe('createBridgeSyncPlugin', () => {
     expect(bridge.syncToSharedText).not.toHaveBeenCalled()
   })
 
-  it('suppresses sync when appendTransaction follows a yjs-originated change', () => {
+  it('syncs when appendTransaction after yjs change makes a material doc change', () => {
     // Simulate: yjs sync change is the initial tr, then an appendTransaction
-    // plugin (like prosemirror-tables) emits a follow-up docChanged tr without
-    // ySyncPlugin meta.
+    // plugin (like prosemirror-tables normalization or schema enforcement)
+    // emits a follow-up docChanged tr. The material change must propagate to
+    // Y.Text — replaceSharedText's 'unchanged' check prevents redundant writes.
     let callCount = 0
     const bridge = makeMockBridge({
       isYjsSyncChange: vi.fn(() => {
@@ -182,8 +183,9 @@ describe('createBridgeSyncPlugin', () => {
     const tr = view.state.tr.insertText(' world', 6)
     view.dispatch(tr)
 
-    // The appended transaction should NOT trigger sync
-    expect(bridge.syncToSharedText).not.toHaveBeenCalled()
+    // The appended transaction's material change MUST trigger sync so that
+    // Y.Text receives the final PM state (including the '!' insertion).
+    expect(bridge.syncToSharedText).toHaveBeenCalledOnce()
   })
 
   it('preserves needsSync through a selection-only transaction in the same batch', () => {
@@ -242,7 +244,42 @@ describe('createBridgeSyncPlugin', () => {
     expect(bridge.syncToSharedText).toHaveBeenCalledOnce()
   })
 
-  it('resets yjsBatchSeen between separate dispatches', () => {
+  it('reports parse-failed via onSyncFailure and preserves needsSync for retry', () => {
+    const onWarning = vi.fn()
+    const onSyncFailure = vi.fn()
+    let callCount = 0
+    const bridge = makeMockBridge({
+      syncToSharedText: vi.fn(() => {
+        callCount++
+        // First call: parse-failed; second call: success
+        if (callCount === 1) return { ok: false as const, reason: 'parse-failed' as const }
+        return { ok: true as const }
+      }),
+    })
+    const view = tracked(createView(bridge, { onWarning, onSyncFailure }))
+
+    // First dispatch: triggers sync → parse-failed → reported, needsSync preserved
+    view.dispatch(view.state.tr.insertText(' world', 6))
+
+    expect(onSyncFailure).toHaveBeenCalledWith(
+      { ok: false, reason: 'parse-failed' },
+      expect.any(Object),
+    )
+    expect(onWarning).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'sync-failed',
+        message: expect.stringContaining('parse-failed'),
+      }),
+    )
+
+    // Second dispatch (selection-only): needsSync was preserved, so sync retries
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(1))),
+    )
+    expect(bridge.syncToSharedText).toHaveBeenCalledTimes(2)
+  })
+
+  it('syncs local edit after a separate yjs-originated dispatch', () => {
     let callCount = 0
     const bridge = makeMockBridge({
       isYjsSyncChange: vi.fn(() => {

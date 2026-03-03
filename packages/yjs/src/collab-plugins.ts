@@ -60,6 +60,15 @@ export type CollabPluginsOptions = {
   yCursorPluginOpts?: YCursorPluginOpts
   /** Extra options forwarded to `yUndoPlugin`. */
   yUndoPluginOpts?: YUndoPluginOpts
+  /**
+   * When `true`, the bridge sync plugin calls `bridge.dispose()` when
+   * the last plugin instance for this bridge is destroyed. Default `false`.
+   *
+   * Enable this only when the factory owns the bridge lifecycle.
+   * When the caller creates and manages the bridge separately, leave
+   * this `false` and call `bridge.dispose()` manually.
+   */
+  autoDisposeBridge?: boolean
   /** Called for non-fatal warnings. Propagated to child plugins. Default `console.warn`. */
   onWarning?: OnWarning
 }
@@ -96,7 +105,10 @@ export function createCollabPlugins(
   // Bridge sync plugin must run before cursor sync plugin so that
   // Y.Text is updated before cursor positions are computed.
   if (options.bridge) {
-    plugins.push(createBridgeSyncPlugin(options.bridge, { onWarning: options.onWarning }))
+    plugins.push(createBridgeSyncPlugin(options.bridge, {
+      onWarning: options.onWarning,
+      autoDispose: options.autoDisposeBridge,
+    }))
   }
 
   if (enableCursorSync && options.serialize) {
