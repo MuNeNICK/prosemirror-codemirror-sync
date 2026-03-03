@@ -213,6 +213,51 @@ describe('bridge integration: external Y.Text change + local PM edit', () => {
     expect(sharedText.toString()).toBe('hello')
   })
 
+  it('Y.Text select-all delete then type propagates to PM', async () => {
+    const { ydoc, view } = tracked(setup('hello'))
+    const sharedText = ydoc.getText('text')
+
+    expect(view.state.doc.textContent).toBe('hello')
+
+    // Simulate CM Ctrl+A + Delete: clear all Y.Text content
+    sharedText.delete(0, sharedText.length)
+    await flush()
+
+    expect(view.state.doc.textContent).toBe('')
+    expect(sharedText.toString()).toBe('')
+
+    // Simulate CM typing: insert new text into Y.Text
+    sharedText.insert(0, 'new text')
+    await flush()
+
+    expect(view.state.doc.textContent).toBe('new text')
+    expect(sharedText.toString()).toBe('new text')
+  })
+
+  it('Y.Text select-all delete then type character by character propagates to PM', async () => {
+    const { ydoc, view } = tracked(setup('hello'))
+    const sharedText = ydoc.getText('text')
+
+    // Simulate CM Ctrl+A + Delete
+    sharedText.delete(0, sharedText.length)
+    await flush()
+
+    expect(view.state.doc.textContent).toBe('')
+
+    // Simulate CM typing character by character
+    sharedText.insert(0, 'a')
+    await flush()
+    expect(view.state.doc.textContent).toBe('a')
+
+    sharedText.insert(1, 'b')
+    await flush()
+    expect(view.state.doc.textContent).toBe('ab')
+
+    sharedText.insert(2, 'c')
+    await flush()
+    expect(view.state.doc.textContent).toBe('abc')
+  })
+
   it('rapid edits after external change all propagate', async () => {
     const { ydoc, view } = tracked(setup('a'))
     const sharedText = ydoc.getText('text')

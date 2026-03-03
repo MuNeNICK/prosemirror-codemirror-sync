@@ -190,9 +190,16 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
       // range selections) to awareness[cmCursorFieldName]. This listener
       // converts those Y.Text relative positions to PM positions and
       // broadcasts to pmCursor — so the app never needs to forward CM ranges.
+      // Guard against reentrant calls: awareness.setLocalStateField emits
+      // 'update' synchronously, which would re-enter handleAwarenessUpdate.
+      // Without this guard, cursor resolution failure → setLocalStateField(null)
+      // → 'update' event → handleAwarenessUpdate → resolution failure again
+      // → setLocalStateField(null) → infinite recursion → stack overflow.
+      let inAwarenessHandler = false
       const handleAwarenessUpdate = (
         { added, updated }: { added: number[]; updated: number[]; removed: number[] },
       ) => {
+        if (inAwarenessHandler) return
         if (suppressCmReaction) return
         if (!sharedText?.doc) return
         const localId = awareness.clientID
@@ -201,55 +208,60 @@ export function createCursorSyncPlugin(options: CursorSyncPluginOptions): Plugin
         const localState = awareness.getLocalState() as Record<string, unknown> | null
         if (!localState) return
 
-        const cmCursor = localState[cmCursorFieldName] as
-          | { anchor: RelativePosition; head: RelativePosition }
-          | undefined
-        if (!cmCursor?.anchor || !cmCursor?.head) {
-          // CM cursor was cleared — also clear pmCursor if it was previously set
-          if (lastCmAbsAnchor !== -1) {
+        inAwarenessHandler = true
+        try {
+          const cmCursor = localState[cmCursorFieldName] as
+            | { anchor: RelativePosition; head: RelativePosition }
+            | undefined
+          if (!cmCursor?.anchor || !cmCursor?.head) {
+            // CM cursor was cleared — also clear pmCursor if it was previously set
+            if (lastCmAbsAnchor !== -1) {
+              awareness.setLocalStateField(cursorFieldName, null)
+              lastCmAbsAnchor = -1
+              lastCmAbsHead = -1
+            }
+            return
+          }
+
+          const absAnchor = createAbsolutePositionFromRelativePosition(cmCursor.anchor, sharedText.doc!)
+          const absHead = createAbsolutePositionFromRelativePosition(cmCursor.head, sharedText.doc!)
+          if (!absAnchor || !absHead) {
+            // Relative position can't be resolved — clear stale PM cursor
             awareness.setLocalStateField(cursorFieldName, null)
             lastCmAbsAnchor = -1
             lastCmAbsHead = -1
+            return
           }
-          return
-        }
 
-        const absAnchor = createAbsolutePositionFromRelativePosition(cmCursor.anchor, sharedText.doc!)
-        const absHead = createAbsolutePositionFromRelativePosition(cmCursor.head, sharedText.doc!)
-        if (!absAnchor || !absHead) {
-          // Relative position can't be resolved — clear stale PM cursor
-          awareness.setLocalStateField(cursorFieldName, null)
-          lastCmAbsAnchor = -1
-          lastCmAbsHead = -1
-          return
-        }
+          // Skip if unchanged (prevents loops from our own pmCursor broadcast)
+          if (absAnchor.index === lastCmAbsAnchor && absHead.index === lastCmAbsHead) return
 
-        // Skip if unchanged (prevents loops from our own pmCursor broadcast)
-        if (absAnchor.index === lastCmAbsAnchor && absHead.index === lastCmAbsHead) return
+          const map = getOrBuildMap(editorView.state.doc)
+          if (!map) {
+            awareness.setLocalStateField(cursorFieldName, null)
+            return
+          }
+          const pmAnchor = reverseCursorMapLookup(map, absAnchor.index)
+          const pmHead = reverseCursorMapLookup(map, absHead.index)
+          if (pmAnchor === null || pmHead === null) {
+            // Mapping failed — clear stale PM cursor
+            awareness.setLocalStateField(cursorFieldName, null)
+            return
+          }
 
-        const map = getOrBuildMap(editorView.state.doc)
-        if (!map) {
-          awareness.setLocalStateField(cursorFieldName, null)
-          return
-        }
-        const pmAnchor = reverseCursorMapLookup(map, absAnchor.index)
-        const pmHead = reverseCursorMapLookup(map, absHead.index)
-        if (pmAnchor === null || pmHead === null) {
-          // Mapping failed — clear stale PM cursor
-          awareness.setLocalStateField(cursorFieldName, null)
-          return
-        }
+          // Only update dedup cache after successful mapping — failed mapping
+          // must not prevent retry when the doc changes and the map resolves.
+          lastCmAbsAnchor = absAnchor.index
+          lastCmAbsHead = absHead.index
 
-        // Only update dedup cache after successful mapping — failed mapping
-        // must not prevent retry when the doc changes and the map resolves.
-        lastCmAbsAnchor = absAnchor.index
-        lastCmAbsHead = absHead.index
-
-        cmCursorHandledByListener = true
-        const ok = broadcastPmCursor(awareness, cursorFieldName, editorView, pmAnchor, pmHead)
-        if (!ok && !warnedSyncPluginMissing) {
-          warnedSyncPluginMissing = true
-          warn({ code: 'ysync-plugin-missing', message: 'ySyncPlugin state not available — cursor broadcast skipped' })
+          cmCursorHandledByListener = true
+          const ok = broadcastPmCursor(awareness, cursorFieldName, editorView, pmAnchor, pmHead)
+          if (!ok && !warnedSyncPluginMissing) {
+            warnedSyncPluginMissing = true
+            warn({ code: 'ysync-plugin-missing', message: 'ySyncPlugin state not available — cursor broadcast skipped' })
+          }
+        } finally {
+          inAwarenessHandler = false
         }
       }
 
