@@ -194,20 +194,30 @@ export function createYjsBridge(
       onError,
     })
     if (result.ok) {
-      // Canonicalize: derive the round-trip text from the XmlFragment we just wrote.
-      // If parse is non-idempotent (serialize(parse(text)) !== text), update Y.Text
-      // to the canonical form so both shared types agree and future bridge mounts
-      // find `both-match` instead of repeatedly reconciling with structural drift.
+      // Canonicalize only during bootstrap (ORIGIN_INIT).
+      //
+      // During live editing the text may be in an intermediate state where
+      // serialize(parse(text)) !== text (e.g. partially typed syntax that the
+      // parser interprets differently from the user's intent). Writing the
+      // canonical form back to Y.Text in that situation corrupts the document
+      // and can trigger reentrant updates in editor view-plugins that observe
+      // Y.Text changes.
+      //
+      // At bootstrap time the text is well-formed (loaded from persistence),
+      // so the round-trip is idempotent and canonicalization ensures both
+      // shared types agree for future bridge mounts (`both-match`).
       let canonical = text
-      try {
-        const pmDoc = yXmlFragmentToProseMirrorRootNode(sharedProseMirror, schema)
-        canonical = normalize(serialize(pmDoc))
-        if (canonical !== text) {
-          replaceSharedText(sharedText, canonical, ORIGIN_INIT, normalize)
+      if (origin === ORIGIN_INIT) {
+        try {
+          const pmDoc = yXmlFragmentToProseMirrorRootNode(sharedProseMirror, schema)
+          canonical = normalize(serialize(pmDoc))
+          if (canonical !== text) {
+            replaceSharedText(sharedText, canonical, ORIGIN_INIT, normalize)
+          }
+        } catch {
+          // Serialization failure during canonicalization is non-fatal;
+          // fall back to using the original text as lastBridgedText.
         }
-      } catch {
-        // Serialization failure during canonicalization is non-fatal;
-        // fall back to using the original text as lastBridgedText.
       }
       lastBridgedText = canonical
     }
