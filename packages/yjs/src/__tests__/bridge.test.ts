@@ -219,3 +219,82 @@ describe('createYjsBridge', () => {
     // No error thrown means observer was removed
   })
 })
+
+describe('canonical write-back', () => {
+  // Use a non-idempotent serialize/parse pair:
+  // parse strips trailing whitespace from each line,
+  // so serialize(parse("hello ")) === "hello" !== "hello "
+  function parseStripping(text: string) {
+    const paragraphs = text.split('\n').map((line) => {
+      const trimmed = line.trimEnd()
+      return schema.node('paragraph', null, trimmed ? [schema.text(trimmed)] : [])
+    })
+    return schema.node('doc', null, paragraphs)
+  }
+
+  function makeNonIdempotentConfig(ydoc: Doc): YjsBridgeConfig {
+    return {
+      doc: ydoc,
+      sharedText: ydoc.getText('text'),
+      sharedProseMirror: ydoc.getXmlFragment('prosemirror'),
+      schema,
+      serialize,
+      parse: parseStripping,
+    }
+  }
+
+  it('does NOT rewrite Y.Text during live editing when round-trip is non-idempotent', () => {
+    const ydoc = new Doc()
+    const config = makeNonIdempotentConfig(ydoc)
+    const bridge = createYjsBridge(config, { initialText: 'hello' })
+
+    // Simulate a live edit: append trailing space (like typing after a word).
+    // parse("hello ") produces paragraph with "hello" (trimmed),
+    // serialize(that) === "hello" !== "hello ".
+    // The bridge must NOT rewrite Y.Text to "hello".
+    const sharedText = ydoc.getText('text')
+    sharedText.insert(sharedText.length, ' ')
+
+    expect(sharedText.toString()).toBe('hello ')
+
+    bridge.dispose()
+  })
+
+  it('does NOT rewrite Y.Text during live editing for multi-step intermediate text', () => {
+    const ydoc = new Doc()
+    const config = makeNonIdempotentConfig(ydoc)
+    const bridge = createYjsBridge(config, { initialText: 'hello' })
+
+    const sharedText = ydoc.getText('text')
+
+    // Step 1: user types " " after "hello"
+    sharedText.insert(sharedText.length, ' ')
+    expect(sharedText.toString()).toBe('hello ')
+
+    // Step 2: user types "w" (building "hello w")
+    sharedText.insert(sharedText.length, 'w')
+    expect(sharedText.toString()).toBe('hello w')
+
+    // Step 3: user types more characters
+    sharedText.insert(sharedText.length, 'orld')
+    expect(sharedText.toString()).toBe('hello world')
+
+    bridge.dispose()
+  })
+
+  it('DOES canonicalize Y.Text during bootstrap', () => {
+    const ydoc = new Doc()
+
+    // Pre-populate Y.Text with trailing whitespace
+    ydoc.getText('text').insert(0, 'hello ')
+
+    const config = makeNonIdempotentConfig(ydoc)
+    const bridge = createYjsBridge(config)
+
+    // Bootstrap should canonicalize: "hello " → "hello"
+    expect(bridge.bootstrapResult.source).toBe('text')
+    expect(ydoc.getText('text').toString()).toBe('hello')
+
+    bridge.dispose()
+  })
+})
